@@ -1,3 +1,4 @@
+import type { DemandBand } from "./staffing";
 // ============================================================================
 // Einstieg in die Dienstplan-Erstellung. Geplant wird ausschließlich über
 // Wochenverträge – die eigentliche Logik steht in weeklyScheduler.ts. Dieser
@@ -26,6 +27,7 @@ export type GenerateInput = {
   rules?: readonly StaffingRule[];
   /** Tagesgewichte dieser Filiale. */
   weights?: Record<WeekdayKey, number>;
+  demandProfile?: readonly DemandBand[];
   /** Tage, an denen jemand schon im anderen Laden arbeitet. */
   blockedDays?: Record<string, readonly string[]>;
   /** Kennung der Filiale (interner Cache). */

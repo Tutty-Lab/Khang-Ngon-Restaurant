@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "MVP zur automatischen Erstellung monatlicher Dienstpl\u00c3\u00a4ne und druckbarer Stundenzettel (Deutschland).",
+  "description": "MVP zur automatischen Erstellung monatlicher DienstplÃ¤ne und druckbarer Stundenzettel (Deutschland).",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -21,6 +21,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

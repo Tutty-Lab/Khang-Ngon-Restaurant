@@ -157,8 +157,9 @@ export function workloadAt(
   minute: number,
   weekday: WeekdayKey,
   weights: Record<WeekdayKey, number> = DAY_WEIGHTS,
+  profile?: readonly DemandBand[],
 ): number {
-  return demandProfileOf(weekday, weights).find((b) => minute >= b.startMinutes && minute < b.endMinutes)?.level ?? 1;
+  return (profile ?? demandProfileOf(weekday, weights)).find((b) => minute >= b.startMinutes && minute < b.endMinutes)?.level ?? 1;
 }
 
 /**
@@ -172,11 +173,12 @@ export function slotTargets(
   targetHours: number,
   slot = 30,
   weights: Record<WeekdayKey, number> = DAY_WEIGHTS,
+  profile?: readonly DemandBand[],
 ): [number, number][] {
   const slots: [number, number][] = [];
   for (const block of blocks) {
     for (let minute = block.startMinutes; minute < block.endMinutes; minute += slot) {
-      slots.push([minute, workloadAt(minute, weekday, weights)]);
+      slots.push([minute, workloadAt(minute, weekday, weights, profile)]);
     }
   }
   const levelMinutes = slots.reduce((sum, [, level]) => sum + level * slot, 0);

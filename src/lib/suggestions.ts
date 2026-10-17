@@ -16,7 +16,7 @@ import { analyzeSchedule } from "./analyze";
 import { datesOfMonth, WEEKDAY_SHORT_VI, type WeekdayKey } from "./demand";
 import { publicHolidays } from "./holidays";
 import { resolveDay, type OverrideMap } from "./workHours";
-import type { StaffingRule } from "./staffing";
+import type { DemandBand, StaffingRule } from "./staffing";
 import { ruleById, staffingRuleId, type RuleId } from "./rules";
 
 export type TrialStore = {
@@ -25,6 +25,7 @@ export type TrialStore = {
   schedule: Schedule;
   rules: readonly StaffingRule[];
   weights: Record<WeekdayKey, number>;
+  demandProfile?: readonly DemandBand[];
 };
 
 export type EmployeeChange = {
@@ -86,6 +87,7 @@ export function planAll(stores: readonly TrialStore[]): Map<string, Shift[]> {
       employees: schedule.employees,
       rules: store.rules,
       weights: store.weights,
+      demandProfile: store.demandProfile,
       blockedDays: blocked,
       storeTag: store.storeId,
     });

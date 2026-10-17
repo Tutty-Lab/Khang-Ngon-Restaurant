@@ -4,8 +4,19 @@ import { publicHolidays } from "../holidays";
 import { resolveDay } from "../workHours";
 import { salaryToMinutes } from "../payroll";
 import { generateSchedule } from "../scheduler";
+import { workloadAt } from "../staffing";
 
 describe("Khang / Ngon", () => {
+  it("uses Ngon's supplied peak hours in the scheduler demand profile", () => {
+    const ngon = STORES[1];
+    for (const day of ["monday", "thursday", "sunday"] as const) {
+      const demand = (minute: number) => workloadAt(minute, day, ngon.dayWeights, ngon.demandProfile);
+      expect(demand(780)).toBeGreaterThan(demand(720));
+      expect(demand(870)).toBeGreaterThan(demand(720));
+      expect(demand(1080)).toBeGreaterThan(demand(1050));
+      expect(demand(1230)).toBeGreaterThan(demand(1260));
+    }
+  });
   it("converts salary without rounding to whole hours", () => {
     expect(salaryToMinutes(2500, 15)).toBe(10000);
     expect(salaryToMinutes(3000, 13.9)).toBe(12950);

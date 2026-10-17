@@ -2,7 +2,7 @@
 
 import type { Employee, Schedule } from "../types";
 import { type WeekdayKey } from "./demand";
-import { type StaffingRule } from "./staffing";
+import { type DemandBand, type StaffingRule } from "./staffing";
 import { DEFAULT_WORK_HOURS } from "./workHours";
 import { khangEmployees, ngonEmployees } from "./restaurantData";
 import { clip } from "./staffing";
@@ -19,6 +19,7 @@ export type StoreConfig = {
   sampleEmployees: () => Employee[];
   workHours?: WorkHoursConfig;
   notes?: string;
+  demandProfile?: readonly DemandBand[];
   /** Welche Wochentage stark sind (Umsatz) – steuert die Stundenverteilung. */
   dayWeights: Record<WeekdayKey, number>;
   /** Wie viele Leute wann im Haus sein sollen. */
@@ -55,6 +56,13 @@ export const STORES: StoreConfig[] = [
   { id: "ngon", name: "Ngon Soulfood", shortName: "Ngon",
     address: "Ostpreußenstraße 35, 81827 München", sampleEmployees: ngonEmployees,
     workHours: hours(true), staffingRules: rules,
+    demandProfile: [
+      { startMinutes: 720, endMinutes: 780, level: 1, label: "Mở cửa" },
+      { startMinutes: 780, endMinutes: 900, level: 1.5, label: "Cao điểm trưa" },
+      { startMinutes: 1050, endMinutes: 1080, level: 1, label: "Mở ca tối" },
+      { startMinutes: 1080, endMinutes: 1260, level: 1.5, label: "Cao điểm tối" },
+      { startMinutes: 1260, endMinutes: 1320, level: 0.8, label: "Cuối ca" },
+    ],
     dayWeights: { monday: 1, tuesday: 1, wednesday: 1, thursday: 1.5, friday: 1.8, saturday: 0, sunday: 1.8 },
     notes: "Đông thứ 5/6/CN; doanh thu cao nhất thứ 6/CN. Cao điểm 13:00–15:00, 18:00–21:00. Nghỉ thứ 7, trưa lễ. Pause 15:00–17:00; ca tối bắt đầu 17:30." },
 ];

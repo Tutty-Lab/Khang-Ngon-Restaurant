@@ -219,6 +219,7 @@ const trialStoreOf = (store: UseScheduleReturn): TrialStore => ({
   schedule: store.schedule,
   rules: store.storeConfig.staffingRules,
   weights: store.storeConfig.dayWeights,
+  demandProfile: store.storeConfig.demandProfile,
 });
 
 /**

@@ -1,3 +1,4 @@
+import type { DemandBand } from "./staffing";
 import type { Employee, PreferredWindow, Shift } from "../types";
 import { DAY_WEIGHTS, datesOfMonth, parseIsoDate, weekdayKeyOf, type WeekdayKey } from "./demand";
 import { monthlyTargetMinutesFor, weeklyBudgetMinutes, weeklyTargetMinutes } from "./contract";
@@ -29,6 +30,7 @@ import {
 type Ctx = {
   rules: readonly StaffingRule[];
   weights: Record<WeekdayKey, number>;
+  demandProfile?: readonly DemandBand[];
   /** employeeId -> Daten, an denen die Person im anderen Laden arbeitet. */
   blocked: Map<string, Set<string>>;
   /** Teil des Cache-Schlüssels, damit Filialen nicht dasselbe Tagesmodell nutzen. */
@@ -48,6 +50,7 @@ type WeeklyInput = {
   rules?: readonly StaffingRule[];
   /** Tagesgewichte dieser Filiale; fehlt = DAY_WEIGHTS. */
   weights?: Record<WeekdayKey, number>;
+  demandProfile?: readonly DemandBand[];
   /** Wer im anderen Laden schon arbeitet: employeeId -> ISO-Daten. */
   blockedDays?: Record<string, readonly string[]>;
   /** Kennung der Filiale (nur für den internen Cache). */
@@ -125,7 +128,7 @@ function makeShift(
   // improveCoverage later moves pauses by the REAL headcount of the day.
   const pauseStartMinutes = pauseMinutes > 0 ? pauseStartCandidates(startMinutes, endMinutes, pauseMinutes).sort((a, b) => {
     const score = (start: number) => Array.from({ length: pauseMinutes / SLOT }, (_, index) => start + index * SLOT)
-      .reduce((sum, minute) => sum + workloadAt(minute, weekday, ctx.weights) + (minute >= CLOSING_START ? 100 : 0), 0);
+      .reduce((sum, minute) => sum + workloadAt(minute, weekday, ctx.weights, ctx.demandProfile) + (minute >= CLOSING_START ? 100 : 0), 0);
     return score(a) - score(b) || ((a / SLOT + hash(employeeId)) % 7) - ((b / SLOT + hash(employeeId)) % 7);
   })[0] : undefined;
   return {
@@ -204,7 +207,7 @@ function dayModel(blocks: DayBlocks, weekday: WeekdayKey, targetHours: number, c
   const key = `${ctx.tag}|${weekday}|${blocks.map((b) => `${b.startMinutes}-${b.endMinutes}`).join(",")}|${targetHours.toFixed(4)}`;
   const cached = dayModelCache.get(key);
   if (cached) return cached;
-  const slotList = slotTargets(blocks, weekday, targetHours, SLOT, ctx.weights);
+  const slotList = slotTargets(blocks, weekday, targetHours, SLOT, ctx.weights, ctx.demandProfile);
   const minutes = slotList.map(([minute]) => minute);
   const windows = staffingWindows(blocks, weekday, ctx.rules).map((window: StaffingWindow) => {
     const slots: number[] = [];
@@ -337,18 +340,27 @@ function chooseWeekWith(
     }
   }
 
-  const worked = new Set(existing.filter((shift) => shift.employeeId === employee.id).map((shift) => shift.date));
+  // Other-store days are workdays too, including days in adjacent weeks.
+  const worked = new Set([
+    ...(busy ?? []),
+    ...existing.filter((shift) => shift.employeeId === employee.id).map((shift) => shift.date),
+  ]);
+  const week = weekStartOf(dates[0]);
+  const workedThisWeek = new Set([...worked].filter((date) => weekStartOf(date) === week));
   const validMasks = new Map<number, boolean>();
   const valid = (mask: number) => {
     const cached = validMasks.get(mask);
     if (cached != null) return cached;
     const set = new Set(worked);
     let ok = true;
+    let weekDays = workedThisWeek.size;
     eligible.forEach((date, index) => {
       if ((mask & (1 << index)) === 0) return;
       if (consecutiveRunLengthWith(set, date) > 6) ok = false;
+      if (!workedThisWeek.has(date)) weekDays++;
       set.add(date);
     });
+    if (weekDays > 6) ok = false;
     validMasks.set(mask, ok);
     return ok;
   };
@@ -585,8 +597,9 @@ export function generateWeeklySchedule(input: WeeklyInput, existing: Shift[] = [
   const ctx: Ctx = {
     rules: input.rules ?? STAFFING_RULES,
     weights: input.weights ?? DAY_WEIGHTS,
+    demandProfile: input.demandProfile,
     blocked: new Map(Object.entries(input.blockedDays ?? {}).map(([id, dates]) => [id, new Set(dates)])),
-    tag: input.storeTag ?? "default",
+    tag: `${input.storeTag ?? "default"}|${JSON.stringify(input.demandProfile ?? null)}`,
     windows: new Map(
       input.employees
         .map((employee) => [employee.id, preferredWindowsOf(employee)] as const)

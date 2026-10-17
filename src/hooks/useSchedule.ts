@@ -410,6 +410,7 @@ export function useSchedule(storeId: string) {
         employees: schedule.employees,
         rules: storeConfig.staffingRules,
         weights: storeConfig.dayWeights,
+        demandProfile: storeConfig.demandProfile,
         blockedDays,
         storeTag: storeConfig.id,
         seed: `${year}-${month}-${Date.now()}-${genNonce.current++}`,
