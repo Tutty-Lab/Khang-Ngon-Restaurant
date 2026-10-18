@@ -263,6 +263,26 @@ function MainApp() {
       </header>
 
       <div className="no-print mx-auto max-w-[1500px] px-3 sm:px-4 pt-4 space-y-4">
+        {/* Filialwahl – gut sichtbar statt nur als Link in der Statuszeile. */}
+        <div className="flex rounded-xl border border-slate-200 bg-white p-0.5" role="tablist" aria-label="Chọn quán">
+          {stores.map((s) => {
+            const active = s.storeId === view.storeId;
+            return (
+              <button
+                key={s.storeId}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => chooseStore(s.storeId)}
+                className={`flex-1 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-semibold ${
+                  active ? "bg-slate-900 text-white" : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {s.storeConfig.name}
+              </button>
+            );
+          })}
+        </div>
         <Dashboard stores={stores} view={view} onChooseStore={chooseStore} onApplyFixes={applyFixes} />
       </div>
 
