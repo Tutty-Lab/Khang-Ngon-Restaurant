@@ -37,6 +37,8 @@ type Ctx = {
   tag: string;
   /** „Khung giờ ưu tiên" je employeeId – nur wer welche gesetzt hat. */
   windows: Map<string, PreferredWindow[]>;
+  employeesById: Map<string, Employee>;
+  holidays: Set<string>;
 };
 
 type WeeklyInput = {
@@ -200,23 +202,23 @@ function optionsFor(
 type DayModel = {
   minutes: number[];
   targets: number[];
-  windows: { slots: number[]; overlap: number[]; minStaff: number; maxStaff: number }[];
+  windows: { slots: number[]; overlap: number[]; minStaff: number; maxStaff: number; who?: (employee: Employee) => boolean }[];
 };
 const dayModelCache = new Map<string, DayModel>();
-function dayModel(blocks: DayBlocks, weekday: WeekdayKey, targetHours: number, ctx: Ctx): DayModel {
-  const key = `${ctx.tag}|${weekday}|${blocks.map((b) => `${b.startMinutes}-${b.endMinutes}`).join(",")}|${targetHours.toFixed(4)}`;
+function dayModel(blocks: DayBlocks, weekday: WeekdayKey, targetHours: number, ctx: Ctx, holiday: boolean): DayModel {
+  const key = `${ctx.tag}|${weekday}|${holiday}|${blocks.map((b) => `${b.startMinutes}-${b.endMinutes}`).join(",")}|${targetHours.toFixed(4)}`;
   const cached = dayModelCache.get(key);
   if (cached) return cached;
   const slotList = slotTargets(blocks, weekday, targetHours, SLOT, ctx.weights, ctx.demandProfile);
   const minutes = slotList.map(([minute]) => minute);
-  const windows = staffingWindows(blocks, weekday, ctx.rules).map((window: StaffingWindow) => {
+  const windows = staffingWindows(blocks, weekday, ctx.rules, holiday).map((window: StaffingWindow) => {
     const slots: number[] = [];
     const overlap: number[] = [];
     minutes.forEach((minute, index) => {
       const covered = Math.min(window.endMinutes, minute + SLOT) - Math.max(window.startMinutes, minute);
       if (covered > 0) { slots.push(index); overlap.push(covered); }
     });
-    return { slots, overlap, minStaff: window.minStaff, maxStaff: window.maxStaff };
+    return { slots, overlap, minStaff: window.minStaff, maxStaff: window.maxStaff, who: window.who };
   });
   const model = { minutes, targets: slotList.map(([, target]) => target), windows };
   if (dayModelCache.size > 5000) dayModelCache.clear();
@@ -230,9 +232,9 @@ function dayModel(blocks: DayBlocks, weekday: WeekdayKey, targetHours: number, c
  *  - demand curve: squared deviation from the slot target (smooth "mountain"),
  *  - paid hours: squared deviation from the day's weighted hours.
  */
-function dayCost(shifts: Shift[], blocks: DayBlocks, weekday: WeekdayKey, targetHours: number | undefined, ctx: Ctx): number {
+function dayCost(shifts: Shift[], blocks: DayBlocks, weekday: WeekdayKey, targetHours: number | undefined, ctx: Ctx, date: string): number {
   if (blocks.length === 0) return 0;
-  const model = dayModel(blocks, weekday, targetHours ?? 0, ctx);
+  const model = dayModel(blocks, weekday, targetHours ?? 0, ctx, ctx.holidays.has(date));
   const counts = model.minutes.map((minute) => {
     let staff = 0;
     for (const shift of shifts) if (workingAt(shift, minute)) staff++;
@@ -240,9 +242,15 @@ function dayCost(shifts: Shift[], blocks: DayBlocks, weekday: WeekdayKey, target
   });
   let cost = 0;
   for (const window of model.windows) {
+    // Gruppenregel (nur Bếp / Phục vụ / Lái xe): eigene Zählung je Slot.
+    const who = window.who;
+    const pool = who ? shifts.filter((shift) => { const e = ctx.employeesById.get(shift.employeeId); return e ? who(e) : false; }) : null;
     for (let k = 0; k < window.slots.length; k++) {
-      const staff = counts[window.slots[k]];
-      cost += (Math.max(0, window.minStaff - staff) + Math.max(0, staff - window.maxStaff)) * window.overlap[k] * 500;
+      const minute = model.minutes[window.slots[k]];
+      const staff = pool ? pool.filter((shift) => workingAt(shift, minute)).length : counts[window.slots[k]];
+      // Gruppenregeln (z. B. „mindestens 1 Phục vụ") wiegen 10× – sonst opfert der
+      // Planer eine halbe Stunde ohne Service, um die Tagesstunden zu treffen.
+      cost += (Math.max(0, window.minStaff - staff) + Math.max(0, staff - window.maxStaff)) * window.overlap[k] * (who ? 5000 : 500);
     }
   }
   for (let i = 0; i < counts.length; i++) cost += (counts[i] - model.targets[i]) ** 2 * SLOT_DEVIATION_COST;
@@ -378,7 +386,7 @@ function chooseWeekWith(
     const occupied = existing.filter((shift) => shift.date === date);
     const weekday = effectiveWeekdayKey(date, holidays);
     const ideal = averageFactor > 0 ? target / Math.max(1, preferredCount) * factorOf(date) / averageFactor : 0;
-    const before = dayCost(occupied, day.blocks, weekday, dailyTargets.get(date), ctx);
+    const before = dayCost(occupied, day.blocks, weekday, dailyTargets.get(date), ctx, date);
     const candidates: { choice: Choice; cost: number }[] = [];
     // Continuous days (CN/lễ, one long block): a single shift always spans the
     // afternoon unless it is short. Allow the full 3–9 h range there and a soft
@@ -392,7 +400,7 @@ function chooseWeekWith(
       let best: Option | undefined;
       let score = Infinity;
       for (const option of optionsFor(employee, date, paid, day.blocks, dates.length < 6, weekday, ctx)) {
-        const cost = dayCost([...occupied, ...option.shifts], day.blocks, weekday, dailyTargets.get(date), ctx) - before + option.styleCost;
+        const cost = dayCost([...occupied, ...option.shifts], day.blocks, weekday, dailyTargets.get(date), ctx, date) - before + option.styleCost;
         if (cost < score) { best = option; score = cost; }
       }
       if (best) candidates.push({
@@ -495,7 +503,7 @@ function topUpShortfalls(
         const weekday = effectiveWeekdayKey(shift.date, holidays);
         const onDay = shifts.filter((other) => other.date === shift.date);
         const others = onDay.filter((other) => other !== shift);
-        const before = dayCost(onDay, day.blocks, weekday, dailyTargets.get(shift.date), ctx);
+        const before = dayCost(onDay, day.blocks, weekday, dailyTargets.get(shift.date), ctx, shift.date);
         for (const start of [shift.startMinutes, shift.endMinutes - presence, block.endMinutes - presence]) {
           if (start < block.startMinutes || start + presence > block.endMinutes) continue;
           const grown = makeShift(employee.id, shift.date, start, paid, shift.shiftType === "EARLY" ? "EARLY" : "LATE", weekday, ctx);
@@ -503,7 +511,7 @@ function topUpShortfalls(
             (other) => other !== shift && other.startMinutes < grown.endMinutes && grown.startMinutes < other.endMinutes,
           );
           if (clash) continue;
-          const cost = dayCost([...others, grown], day.blocks, weekday, dailyTargets.get(shift.date), ctx) - before;
+          const cost = dayCost([...others, grown], day.blocks, weekday, dailyTargets.get(shift.date), ctx, shift.date) - before;
           if (!best || (best.over && !over) || (best.over === over && cost < best.cost)) {
             best = { old: shift, next: grown, cost, over };
           }
@@ -530,17 +538,17 @@ function improveCoverage(result: Shift[], employees: Employee[], days: Map<strin
     const target = dailyTargets.get(date);
     const partialWeek = [...days].filter(([otherDate, otherDay]) => !otherDay.closed && weekStartOf(otherDate) === weekStartOf(date)).length < 6;
     for (let pass = 0; pass < 4; pass++) {
-      const baseline = dayCost(onDay, day.blocks, weekday, target, ctx);
+      const baseline = dayCost(onDay, day.blocks, weekday, target, ctx, date);
       let changed = false;
       for (const employee of employees) {
         const own = onDay.filter((shift) => shift.employeeId === employee.id);
         if (own.length === 0) continue;
         const paid = own.reduce((sum, shift) => sum + shift.paidMinutes, 0);
         const others = onDay.filter((shift) => shift.employeeId !== employee.id);
-        let bestCost = dayCost(onDay, day.blocks, weekday, target, ctx);
+        let bestCost = dayCost(onDay, day.blocks, weekday, target, ctx, date);
         let best: Shift[] | undefined;
         for (const option of optionsFor(employee, date, paid, day.blocks, partialWeek, weekday, ctx)) {
-          const cost = dayCost([...others, ...option.shifts], day.blocks, weekday, target, ctx);
+          const cost = dayCost([...others, ...option.shifts], day.blocks, weekday, target, ctx, date);
           if (cost < bestCost - 1e-9) { best = option.shifts; bestCost = cost; }
         }
         if (best) { onDay = [...others, ...best]; changed = true; }
@@ -549,12 +557,12 @@ function improveCoverage(result: Shift[], employees: Employee[], days: Map<strin
         const shift = onDay[i];
         if (shift.pauseMinutes <= 0) continue;
         const others = onDay.filter((_, k) => k !== i);
-        let bestCost = dayCost(onDay, day.blocks, weekday, target, ctx);
+        let bestCost = dayCost(onDay, day.blocks, weekday, target, ctx, date);
         let best: Shift | undefined;
         for (const start of pauseStartCandidates(shift.startMinutes, shift.endMinutes, shift.pauseMinutes)) {
           if (start === shift.pauseStartMinutes) continue;
           const moved = { ...shift, pauseStartMinutes: start };
-          const cost = dayCost([...others, moved], day.blocks, weekday, target, ctx);
+          const cost = dayCost([...others, moved], day.blocks, weekday, target, ctx, date);
           if (cost < bestCost - 1e-9) { best = moved; bestCost = cost; }
         }
         if (best) { onDay = [...others.slice(0, i), best, ...others.slice(i)]; changed = true; }
@@ -576,17 +584,17 @@ function improveCoverage(result: Shift[], employees: Employee[], days: Map<strin
               .filter((option) => option.shifts[option.shifts.length - 1].endMinutes === blockEnd);
             if (newClosers.length === 0) continue;
             const movesA = optionsFor(empA, date, closer.paidMinutes, day.blocks, partialWeek, weekday, ctx);
-            let bestCost = dayCost(onDay, day.blocks, weekday, target, ctx);
+            let bestCost = dayCost(onDay, day.blocks, weekday, target, ctx, date);
             let best: Shift[] | undefined;
             for (const optionB of newClosers) for (const optionA of movesA) {
-              const cost = dayCost([...rest, ...optionB.shifts, ...optionA.shifts], day.blocks, weekday, target, ctx);
+              const cost = dayCost([...rest, ...optionB.shifts, ...optionA.shifts], day.blocks, weekday, target, ctx, date);
               if (cost < bestCost - 1e-9) { best = [...optionB.shifts, ...optionA.shifts]; bestCost = cost; }
             }
             if (best) { onDay = [...rest, ...best]; changed = true; }
           }
         }
       }
-      if (!changed || dayCost(onDay, day.blocks, weekday, target, ctx) >= baseline) break;
+      if (!changed || dayCost(onDay, day.blocks, weekday, target, ctx, date) >= baseline) break;
     }
     output.push(...onDay);
   }
@@ -605,6 +613,8 @@ export function generateWeeklySchedule(input: WeeklyInput, existing: Shift[] = [
         .map((employee) => [employee.id, preferredWindowsOf(employee)] as const)
         .filter(([, windows]) => windows.length > 0),
     ),
+    employeesById: new Map(input.employees.map((employee) => [employee.id, employee])),
+    holidays: input.holidays ?? publicHolidays(input.year),
   };
   const holidays = input.holidays ?? publicHolidays(input.year);
   const days = new Map(datesOfMonth(input.year, input.month).map((date) => [
@@ -701,7 +711,7 @@ export function generateWeeklySchedule(input: WeeklyInput, existing: Shift[] = [
       if (next.reduce((sum, s) => sum + s.paidMinutes, 0) !== paid) continue;
       const score = (shifts: Shift[]) => weekDates.reduce((sum, date) => sum + dayCost(
         [...others.filter((s) => s.date === date), ...shifts.filter((s) => s.date === date)],
-        days.get(date)!.blocks, effectiveWeekdayKey(date, holidays), dailyTargets.get(date), ctx), 0);
+        days.get(date)!.blocks, effectiveWeekdayKey(date, holidays), dailyTargets.get(date), ctx, date), 0);
       if (score(next) < score(own) - 0.01) {
         result = [...others, ...next];
         changed = true;

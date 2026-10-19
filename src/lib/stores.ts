@@ -47,15 +47,32 @@ const rules: readonly StaffingRule[] = [
   { label: "Cao điểm tối", when: "18:00–21:00", minStaff: 1, maxStaff: Infinity,
     scaled: false, windows: clip(1080, 1260) },
 ];
+// Khang (chủ quán, 10/2026): ít nhất 1 Phục vụ suốt giờ mở, 1 Bếp tới 22:00,
+// Chủ nhật (chủ yếu giao hàng / mang về) phải có người lái xe giờ đông tối.
+const isKitchen = (e: Employee) => e.station === "KITCHEN";
+const isDriver = (e: Employee) => /xe/i.test(e.role ?? "");
+// Beide Läden: immer mindestens 1 Phục vụ und 1 Bếp im Haus.
+const groupRules: readonly StaffingRule[] = [
+  ...rules,
+  { label: "Phục vụ", when: "suốt mỗi khung mở", minStaff: 1, maxStaff: Infinity,
+    scaled: false, who: (e) => !isKitchen(e), windows: blocks => blocks },
+  { label: "Bếp", when: "suốt mỗi khung mở, tới 22:00", minStaff: 1, maxStaff: Infinity,
+    scaled: false, who: isKitchen, windows: blocks => blocks },
+];
+const khangRules: readonly StaffingRule[] = [
+  ...groupRules,
+  { label: "Lái xe CN", when: "18:00–21:00 Chủ nhật", minStaff: 1, maxStaff: Infinity,
+    scaled: false, weekdays: ["sunday"], onHolidays: false, who: isDriver, windows: clip(1080, 1260) },
+];
 export const STORES: StoreConfig[] = [
   { id: "khang", name: "Khang Restaurant", shortName: "Khang",
     address: "Einsteinstraße 179, 81677 München", sampleEmployees: khangEmployees,
-    workHours: hours(false), staffingRules: rules,
+    workHours: hours(false), staffingRules: khangRules,
     dayWeights: { monday: 1, tuesday: 1.5, wednesday: 1.5, thursday: 1.5, friday: 1, saturday: 1, sunday: 1 },
     notes: "Đông thứ 3/4/5. Chủ nhật chủ yếu giao hàng, mang về. Nghỉ trưa thứ 7, chủ nhật, ngày lễ. Pause 15:00–17:00; ca tối bắt đầu 17:30." },
   { id: "ngon", name: "Ngon Soulfood", shortName: "Ngon",
     address: "Ostpreußenstraße 35, 81827 München", sampleEmployees: ngonEmployees,
-    workHours: hours(true), staffingRules: rules,
+    workHours: hours(true), staffingRules: groupRules,
     demandProfile: [
       { startMinutes: 720, endMinutes: 780, level: 1, label: "Mở cửa" },
       { startMinutes: 780, endMinutes: 900, level: 1.5, label: "Cao điểm trưa" },

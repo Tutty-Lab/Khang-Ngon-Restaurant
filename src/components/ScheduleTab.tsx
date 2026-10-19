@@ -9,7 +9,8 @@ import {
 } from "../lib/demand";
 import { minutesToShortHours, minutesToTime } from "../lib/time";
 import { signedHours } from "../lib/dateFormat";
-import { isDayClosed } from "../lib/workHours";
+import { isDayClosed, resolveDay } from "../lib/workHours";
+import { workingAt } from "../lib/staffing";
 import { publicHolidays } from "../lib/holidays";
 import { ShiftCellEditor } from "./ShiftCellEditor";
 import { ScheduleDayView } from "./ScheduleDayView";
@@ -147,6 +148,35 @@ export function ScheduleTab({
     return map;
   }, [store.analysis]);
   const staffingRows = store.storeConfig.staffingRules;
+
+  // Debug wie AnAn: Bếp/Phục vụ je Tag und je Zeitfenster die kleinste Zahl
+  // gleichzeitig Anwesender (Sushi zählt zur Küche, Bar/Quản lý zum Service).
+  const groupStats = useMemo(() => {
+    const holidays = publicHolidays(schedule.year);
+    const ovMap = Object.fromEntries(schedule.dateOverrides.map((o) => [o.date, o]));
+    const groupById = new Map(schedule.employees.map((e) => [e.id, e.station === "KITCHEN" ? "KITCHEN" : "SERVICE"] as const));
+    const result = new Map<string, { kitchen: number; service: number; windows: Map<string, number | null> }>();
+    for (const d of dates) {
+      const dayShifts = schedule.shifts.filter((s) => s.date === d);
+      const kitchen = new Set(dayShifts.filter((s) => groupById.get(s.employeeId) === "KITCHEN").map((s) => s.employeeId));
+      const service = new Set(dayShifts.filter((s) => groupById.get(s.employeeId) === "SERVICE").map((s) => s.employeeId));
+      const windows = new Map<string, number | null>();
+      result.set(d, { kitchen: kitchen.size, service: service.size, windows });
+      const day = resolveDay(schedule.workHours, d, holidays, ovMap);
+      if (day.closed) continue;
+      for (const w of GROUP_WINDOWS) {
+        let min: number | null = null;
+        for (const block of day.blocks) {
+          for (let t = Math.max(w.from, block.startMinutes); t + 30 <= Math.min(w.to, block.endMinutes); t += 30) {
+            const count = dayShifts.filter((s) => groupById.get(s.employeeId) === w.group && workingAt(s, t)).length;
+            min = min == null ? count : Math.min(min, count);
+          }
+        }
+        windows.set(w.key, min);
+      }
+    }
+    return result;
+  }, [dates, schedule]);
 
   const hasEmployees = store.activeEmployees.length > 0;
 
@@ -358,6 +388,8 @@ export function ScheduleTab({
             <tfoot>
               <SummaryRow label="Số nhân viên" dates={gridDates} value={(d) => String(dayStats.get(d)!.people.size)} />
               <SummaryRow label="Số ca" dates={gridDates} value={(d) => String(dayStats.get(d)!.shifts)} />
+              <SummaryRow label="Bếp" labelClass="text-orange-700" dates={gridDates} value={(d) => String(groupStats.get(d)!.kitchen)} />
+              <SummaryRow label="Phục vụ" labelClass="text-sky-700" dates={gridDates} value={(d) => String(groupStats.get(d)!.service)} />
               <SummaryRow
                 label="Tổng giờ"
                 dates={gridDates}
@@ -384,6 +416,16 @@ export function ScheduleTab({
                   peaks={(d) => peaksByDay.get(d)?.byLabel.get(rule.label)}
                 />
               ))}
+              {schedule.shifts.length > 0 && GROUP_WINDOWS.map((w) => (
+                <GroupWindowRow
+                  key={w.key}
+                  label={`${w.group === "KITCHEN" ? "Bếp" : "PV"} ${w.range}`}
+                  title={`${w.group === "KITCHEN" ? "Bếp" : "Phục vụ"} ít nhất có mặt, ${w.title}`}
+                  labelClass={w.group === "KITCHEN" ? "text-orange-700" : "text-sky-700"}
+                  dates={gridDates}
+                  value={(d) => groupStats.get(d)?.windows.get(w.key) ?? null}
+                />
+              ))}
             </tfoot>
           </table>
         </div>
@@ -406,17 +448,20 @@ export function ScheduleTab({
 function SummaryRow({
   label,
   hint,
+  labelClass = "",
   dates,
   value,
 }: {
   label: string;
   hint?: string;
+  /** Màu nhãn theo nhóm (Bếp cam, Phục vụ xanh). */
+  labelClass?: string;
   dates: string[];
   value: (d: string) => string;
 }) {
   return (
     <tr className="bg-slate-50 text-slate-600">
-      <td className="sticky left-0 z-10 bg-slate-50 border-t border-r border-slate-200 px-1.5 py-1 font-medium w-[80px] max-w-[80px] text-[10px] leading-tight">
+      <td className={`sticky left-0 z-10 bg-slate-50 border-t border-r border-slate-200 px-1.5 py-1 font-medium w-[80px] max-w-[80px] text-[10px] leading-tight ${labelClass}`}>
         {label}
         {hint && <span className="ml-1 text-[11px] font-normal text-slate-400">{hint}</span>}
       </td>
@@ -430,6 +475,16 @@ function SummaryRow({
     </tr>
   );
 }
+
+/** Kurznamen der Besetzungsregeln für die schmale erste Spalte. */
+const SHORT_RULE_LABELS: Record<string, string> = {
+  "Trong giờ mở cửa": "Giờ mở",
+  "Cao điểm trưa": "Đông 13–15",
+  "Cao điểm tối": "Đông 18–21",
+  "Phục vụ": "Có PV",
+  "Bếp": "Có Bếp",
+  "Lái xe CN": "Xe CN 18–21",
+};
 
 /**
  * Eine Besetzungsregel als Zeile: wie viele Leute in der Spanne da sind, als
@@ -455,14 +510,11 @@ function CoverageRow({
     <tr className="bg-slate-50 text-slate-600">
       <td
         className="sticky left-0 z-10 bg-slate-50 border-t border-r border-slate-200 px-1.5 py-1 font-medium w-[80px] max-w-[80px] text-[10px] leading-tight"
-        title={`${hard ? "Luật cứng" : "Luật mềm"}: ${label} ${when}`}
+        title={`${hard ? "Luật cứng" : "Luật mềm"}: ${label}, ${when} · số người vắng–đông`}
       >
-        {label} <span className="text-[11px] font-normal text-slate-400">{when} · người (vắng–đông)</span>
-        <span
-          className={`ml-1 rounded px-1 text-[10px] font-medium ${hard ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-800"}`}
-        >
-          {hard ? "cứng" : "mềm"}
-        </span>
+        {/* Nhãn ngắn để cột tên hẹp; đầy đủ ở tooltip. Chấm đỏ = luật cứng, vàng = mềm. */}
+        <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${hard ? "bg-rose-500" : "bg-amber-400"}`} />
+        {SHORT_RULE_LABELS[label] ?? label}
       </td>
       {dates.map((d) => {
         const list = peaks(d);
@@ -488,6 +540,56 @@ function CoverageRow({
           >
             {min === max ? min : `${min}–${max}`}
             {short && <span className="block text-[10px] leading-none">cần {need}</span>}
+          </td>
+        );
+      })}
+      <td className="border-t border-l border-slate-200" />
+      <td className="border-t border-l border-slate-200" />
+    </tr>
+  );
+}
+
+// Khung giờ cho các dòng „ít nhất" Bếp/Phục vụ – theo giờ Khang & Ngon
+// (12–15, 17:30–22; đông 13–15 và 18–21). Nhãn ngắn, đầy đủ ở tooltip.
+const GROUP_RANGES = [
+  ["noon-open", "12–13", "12:00 – 13:00", 12 * 60, 13 * 60],
+  ["noon", "13–15", "13:00 – 15:00 (giờ đông)", 13 * 60, 15 * 60],
+  ["evening-open", "17½–18", "17:30 – 18:00", 17 * 60 + 30, 18 * 60],
+  ["evening", "18–21", "18:00 – 21:00 (giờ đông)", 18 * 60, 21 * 60],
+  ["evening-end", "21–22", "21:00 – đóng cửa 22:00", 21 * 60, 22 * 60],
+] as const;
+const GROUP_WINDOWS = (["KITCHEN", "SERVICE"] as const).flatMap((group) =>
+  GROUP_RANGES.map(([key, range, title, from, to]) => ({ key: `${group}-${key}`, range, title, group, from, to })),
+);
+
+/** Dòng „ít nhất x người" của một nhóm trong khung giờ: 0 = đỏ, 1 = vàng. */
+function GroupWindowRow({
+  label,
+  title,
+  labelClass,
+  dates,
+  value,
+}: {
+  label: string;
+  title: string;
+  labelClass: string;
+  dates: string[];
+  value: (d: string) => number | null;
+}) {
+  return (
+    <tr className="bg-slate-50 text-slate-600">
+      <td
+        title={title}
+        className={`sticky left-0 z-10 bg-slate-50 border-t border-r border-slate-200 px-1.5 py-1 font-medium w-[80px] max-w-[80px] text-[10px] leading-tight whitespace-nowrap ${labelClass}`}
+      >
+        {label}
+      </td>
+      {dates.map((d) => {
+        const n = value(d);
+        const tone = n == null ? "text-slate-300" : n === 0 ? "bg-rose-50 text-rose-700 font-semibold" : n === 1 ? "bg-amber-50 text-amber-800" : "";
+        return (
+          <td key={d} className={`border-t border-l border-slate-200 px-1 py-1 text-center ${tone}`}>
+            {n ?? "–"}
           </td>
         );
       })}

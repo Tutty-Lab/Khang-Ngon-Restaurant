@@ -135,11 +135,13 @@ export function analyzeSchedule(input: AnalyzeInput): ScheduleAnalysis {
 
     const peaks: PeakCoverage[] = [];
     if (!day.closed) {
-      for (const peak of staffingWindows(day.blocks, effectiveWeekdayKey(date, holidays), input.rules)) {
+      for (const peak of staffingWindows(day.blocks, effectiveWeekdayKey(date, holidays), input.rules, holidays.has(date))) {
         const from = peak.startMinutes;
         const to = peak.endMinutes;
-        const points = coveragePoints(available, from, to).slice(0, -1);
-        const counts = points.map((minute) => new Set(available.filter((shift) => workingAt(shift, minute)).map((shift) => shift.employeeId)).size);
+        const who = peak.who;
+        const pool = who ? available.filter((shift) => { const e = employeesById.get(shift.employeeId); return e ? who(e) : false; }) : available;
+        const points = coveragePoints(pool, from, to).slice(0, -1);
+        const counts = points.map((minute) => new Set(pool.filter((shift) => workingAt(shift, minute)).map((shift) => shift.employeeId)).size);
         const minStaff = counts.length ? Math.min(...counts) : 0;
         const maxStaff = counts.length ? Math.max(...counts) : 0;
         peaks.push({

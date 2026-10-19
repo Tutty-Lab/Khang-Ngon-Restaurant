@@ -1,4 +1,4 @@
-import type { Shift } from "../types";
+import type { Employee, Shift } from "../types";
 import { DAY_WEIGHTS, type WeekdayKey } from "./demand";
 import type { DayBlocks, DayWindow } from "./workHours";
 
@@ -8,6 +8,8 @@ export type StaffingWindow = {
   endMinutes: number;
   minStaff: number;
   maxStaff: number;
+  /** Nur diese Leute zählen (z. B. nur Bếp); fehlt = alle. */
+  who?: (employee: Employee) => boolean;
 };
 
 /** Ab hier läuft der Abend aus – bis dahin muss jemand im Laden bleiben. */
@@ -36,6 +38,10 @@ export type StaffingRule = {
   scaled: boolean;
   /** Nur an diesen (effektiven) Wochentagen; fehlt = an jedem offenen Tag. */
   weekdays?: readonly WeekdayKey[];
+  /** Nur diese Leute zählen (Bếp, Phục vụ, Lái xe); fehlt = alle. */
+  who?: (employee: Employee) => boolean;
+  /** false = gilt nicht an Feiertagen (obwohl die wie Sonntag zählen). */
+  onHolidays?: boolean;
   windows: (blocks: DayBlocks) => DayWindow[];
 };
 
@@ -88,10 +94,11 @@ export function staffingWindows(
   blocks: DayBlocks,
   weekday: WeekdayKey,
   rules: readonly StaffingRule[] = STAFFING_RULES,
+  holiday = false,
 ): StaffingWindow[] {
-  return rules.filter((rule) => ruleAppliesOn(rule, weekday)).flatMap((rule) => {
+  return rules.filter((rule) => ruleAppliesOn(rule, weekday) && !(holiday && rule.onHolidays === false)).flatMap((rule) => {
     const range = ruleRange(rule, weekday);
-    return rule.windows(blocks).map((window) => ({ label: rule.label, ...window, ...range }));
+    return rule.windows(blocks).map((window) => ({ label: rule.label, ...window, ...range, who: rule.who }));
   });
 }
 
