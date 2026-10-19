@@ -75,6 +75,7 @@ type Draft = {
   shiftMin: string;
   shiftMax: string;
   spreadEvenly: boolean;
+  longShifts: boolean;
   windows: { days: WeekdayKey[]; start: string; end: string }[];
   startDate: string; // "yyyy-MM-dd" hoặc "" = từ đầu tháng
   endDate: string; // "yyyy-MM-dd" hoặc "" = vẫn đang làm
@@ -108,6 +109,7 @@ function draftFrom(emp?: Employee, partners: PartnerChoice = {}): Draft {
     shiftMin: emp?.shiftHours ? hoursText(emp.shiftHours.min) : "",
     shiftMax: emp?.shiftHours ? hoursText(emp.shiftHours.max) : "",
     spreadEvenly: emp?.spreadEvenly === true,
+    longShifts: emp?.longShifts === true,
     windows: (emp?.preferredWindows ?? []).map((w) => ({
       days: [...w.days],
       start: minutesToTime(w.startMinutes),
@@ -183,6 +185,7 @@ function draftToEmployee(d: Draft): Omit<Employee, "id"> {
     requiredOnHolidays: d.holidayDuty ? true : undefined,
     shiftHours: shiftHoursFromDraft(d),
     spreadEvenly: d.spreadEvenly ? true : undefined,
+    longShifts: d.longShifts ? true : undefined,
     preferredWindows: windowsFromDraft(d),
     // Leeres Feld = von Monatsanfang an dabei (kein Eintrittsdatum).
     startDate: /^\d{4}-\d{2}-\d{2}$/.test(d.startDate) ? d.startDate : undefined,
@@ -393,6 +396,9 @@ function EmployeeSummaryRow({
             ca {minutesToShortHours(ownRange.min)}–{minutesToShortHours(ownRange.max)}
             {emp.spreadEvenly ? " · rải đều" : ""}
           </span>
+        ) : null}
+        {emp.longShifts ? (
+          <span className="rounded bg-slate-100 text-slate-600 px-1.5 py-0.5">ca dài tới 9h</span>
         ) : null}
         {preferredWindowsOf(emp).map((w, i) => (
           <span key={i} className="rounded bg-teal-50 text-teal-800 px-1.5 py-0.5">
@@ -756,6 +762,12 @@ function EmployeeSheet({
                       note="Giờ đã chia đều theo tuần sẵn; có Độ dài ca thì ưu tiên nhiều ca ngắn hơn."
                       checked={d.spreadEvenly}
                       onChange={(v) => set("spreadEvenly", v)}
+                    />
+                    <CheckRow
+                      label="Ca dài tới 9h khi thiếu giờ (ký thừa giờ)"
+                      note="Chỉ khi hết ngày mà vẫn thiếu: nối ca trưa + tối thành 1 ca, đến sớm nhất 11:00, nghỉ 60 phút trong giờ đóng cửa trưa (vd 11:00–21:00 = 9h). Quản lý luôn được phép."
+                      checked={d.longShifts}
+                      onChange={(v) => set("longShifts", v)}
                     />
                     <div className="space-y-2">
                       <FieldLabel hint="app ưu tiên xếp ngày và giờ vào đây">Khung giờ ưu tiên</FieldLabel>

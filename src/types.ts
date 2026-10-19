@@ -85,6 +85,12 @@ export type Employee = {
    */
   maxDaysPerWeek?: number;
   /**
+   * „Ca dài tới 9h": reichen alle freien Tage nicht für das Soll, darf ein
+   * Tag mit Mittag + Abend zu EINEM Dienst durch die Mittagsschließung werden
+   * (z. B. 12:00–22:00, 60 min Pause → 9 h bezahlt). Grenze 9 h statt 8 h.
+   */
+  longShifts?: boolean;
+  /**
    * Muss diese Person an FEIERTAGEN im Dienst sein?
    *
    * Vorgabe des Betriebs: „Những ngày lễ phải có bạn Bá Việt Nguyen trong ca".

@@ -3,6 +3,7 @@
 // ============================================================================
 
 import type { Employee, Shift } from "../types";
+import { allowsLongDays, LONG_PAID_MINUTES } from "./longShifts";
 import { monthlyTargetMinutes, monthlyTargetMinutesFor, SCHEDULE_SLOT_MINUTES } from "./contract";
 import { calculatePause, minutesToShortHours } from "./time";
 import { maxConsecutiveRun } from "./consecutive";
@@ -54,6 +55,8 @@ export type ValidationResult = {
  * ausgeglichen).
  */
 const MAX_PAID_MINUTES = 8 * 60;
+/** „Ca dài" (Quản lý / Häkchen): 9 h bezahlt, Pause nach § 4 ArbZG. */
+const maxPaidFor = (employee: Employee | undefined) => (allowsLongDays(employee) ? LONG_PAID_MINUTES : MAX_PAID_MINUTES);
 const MAX_CONSECUTIVE_DAYS = 6;
 
 export function validateSchedule(
@@ -116,12 +119,12 @@ export function validateSchedule(
         message: `Giờ ra không sau giờ vào (${shift.date}).`,
       });
     }
-    if (shift.paidMinutes > MAX_PAID_MINUTES) {
+    if (shift.paidMinutes > maxPaidFor(employee)) {
       errors.push({
         employeeId: shift.employeeId,
         date: shift.date,
         rule: "shift-length",
-        message: `Quá ${MAX_PAID_MINUTES / 60} giờ công ngày ${shift.date}.`,
+        message: `Quá ${maxPaidFor(employee) / 60} giờ công ngày ${shift.date}.`,
       });
     }
     if (shift.paidMinutes !== expectedPaid) {
@@ -173,8 +176,8 @@ export function validateSchedule(
     const assignedMinutes = empShifts.reduce((sum, s) => sum + s.paidMinutes, 0);
     for (const date of seenDates) {
       const paid = empShifts.filter((shift) => shift.date === date).reduce((sum, shift) => sum + shift.paidMinutes, 0);
-      if (paid > MAX_PAID_MINUTES) errors.push({ employeeId: emp.id, date, rule: "shift-length",
-        message: `${emp.name}: tổng giờ công ngày ${date} vượt ${MAX_PAID_MINUTES / 60} giờ.`,
+      if (paid > maxPaidFor(emp)) errors.push({ employeeId: emp.id, date, rule: "shift-length",
+        message: `${emp.name}: tổng giờ công ngày ${date} vượt ${maxPaidFor(emp) / 60} giờ.`,
       });
     }
     const maxRun = maxConsecutiveRun(new Set(empShifts.map((s) => s.date)));

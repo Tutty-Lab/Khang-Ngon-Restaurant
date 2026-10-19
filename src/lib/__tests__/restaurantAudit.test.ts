@@ -8,13 +8,14 @@ import { publicHolidays } from "../holidays";
 import { resolveDay } from "../workHours";
 import { maxConsecutiveRun } from "../consecutive";
 import { weekStartOf } from "../weeks";
+import { allowsLongDays, EARLY_START_MINUTES } from "../longShifts";
 
 describe("Real restaurant input: full year audit", () => {
   it("checks both stores together across all 2026 months", () => {
     const reports: unknown[] = [];
     for (let month = 1; month <= 12; month++) {
       const busy = new Map<string, Set<string>>();
-      const personShifts = new Map<string, { date: string; start: number; end: number; paid: number }[]>();
+      const personShifts = new Map<string, { date: string; start: number; end: number; paid: number; long: boolean }[]>();
       for (const config of STORES) {
         const s = { ...initialScheduleFor(config), month };
         const blockedDays = Object.fromEntries(s.employees.map(e => [e.id, [...(busy.get(e.personKey ?? e.id) ?? [])]]));
@@ -34,7 +35,15 @@ describe("Real restaurant input: full year audit", () => {
         for (const shift of shifts) {
           const day = resolveDay(s.workHours, shift.date, publicHolidays(2026), {});
           expect(day.closed).toBe(false);
-          expect(day.blocks.some(b => shift.startMinutes >= b.startMinutes && shift.endMinutes <= b.endMinutes)).toBe(true);
+          const inBlock = (m: number) => day.blocks.some(b => m >= b.startMinutes && m <= b.endMinutes);
+          if (allowsLongDays(s.employees.find(e => e.id === shift.employeeId)) && !day.blocks.some(b => shift.startMinutes >= b.startMinutes && shift.endMinutes <= b.endMinutes)) {
+            // „Ca dài": Beginn ab 11:00, Ende in Öffnungszeit, Pause ganz in der Mittagsschließung.
+            expect(shift.startMinutes >= EARLY_START_MINUTES && shift.startMinutes < day.blocks[0].endMinutes && inBlock(shift.endMinutes), `${shift.date} long`).toBe(true);
+            const pause = shift.pauseStartMinutes ?? -1;
+            expect(day.blocks.some((b, i) => day.blocks[i + 1] && pause >= b.endMinutes && pause + shift.pauseMinutes <= day.blocks[i + 1].startMinutes), `${shift.date} pause`).toBe(true);
+          } else {
+            expect(day.blocks.some(b => shift.startMinutes >= b.startMinutes && shift.endMinutes <= b.endMinutes)).toBe(true);
+          }
           expect(shift.startMinutes % 30).toBe(0);
           expect(shift.endMinutes % 30).toBe(0);
         }
@@ -45,7 +54,7 @@ describe("Real restaurant input: full year audit", () => {
           for (const date of new Set(own.map(t => t.date))) expect(dates.has(date), `${key}/${date}`).toBe(false);
           for (const date of own.map(t => t.date)) dates.add(date);
           busy.set(key, dates);
-          personShifts.set(key, [...(personShifts.get(key) ?? []), ...own.map(t => ({ date: t.date, start: t.startMinutes, end: t.endMinutes, paid: t.paidMinutes }))]);
+          personShifts.set(key, [...(personShifts.get(key) ?? []), ...own.map(t => ({ date: t.date, start: t.startMinutes, end: t.endMinutes, paid: t.paidMinutes, long: allowsLongDays(e) }))]);
         }
         reports.push({ month, store: config.id, targetHours: s.employees.reduce((sum,e) => sum+e.targetMinutes,0)/60,
           assignedHours: analysis.totalPaidHours, warnings: validation.errors.filter(e => e.severity === "warning"),
@@ -56,13 +65,14 @@ describe("Real restaurant input: full year audit", () => {
       for (const [person, shifts] of personShifts) {
         expect(maxConsecutiveRun(new Set(shifts.map(s => s.date))), `${person}/${month} consecutive`).toBeLessThanOrEqual(6);
         const daily = new Map<string, number>();
+        const long = shifts.some(s => s.long);
         const weekly = new Map<string, Set<string>>();
         for (const s of shifts) {
           daily.set(s.date, (daily.get(s.date) ?? 0) + s.paid);
           const week = weekStartOf(s.date);
           weekly.set(week, (weekly.get(week) ?? new Set()).add(s.date));
         }
-        for (const paid of daily.values()) expect(paid).toBeLessThanOrEqual(480);
+        for (const paid of daily.values()) expect(paid).toBeLessThanOrEqual(long ? 540 : 480);
         for (const days of weekly.values()) expect(days.size).toBeLessThanOrEqual(6);
       }
     }

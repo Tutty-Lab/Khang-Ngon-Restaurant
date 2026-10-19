@@ -8,6 +8,7 @@ import { consecutiveRunLengthWith } from "./consecutive";
 import { effectiveWeekdayKey, resolveDay, type DayBlocks, type DayWindow, type OverrideMap, type WorkHoursConfig } from "./workHours";
 import { publicHolidays } from "./holidays";
 import { weekStartOf } from "./weeks";
+import { allowsLongDays, EARLY_START_MINUTES, LONG_PAID_MINUTES } from "./longShifts";
 import { minutesOutsidePreferred, ownShiftRangeMinutes, preferredWindowsOf } from "./preferredWindows";
 import {
   CLOSING_START,
@@ -320,7 +321,13 @@ function chooseWeekWith(
     ? Math.min(limit, Math.floor(target / fixed))
     : own
       ? Math.min(limit, Math.max(1, ownCount))
-      : Math.min(limit, Math.max(1, Math.floor(target / MIN_SHIFT)));
+      : employee.personKey
+        // Arbeitet auch im anderen Laden: lieber wenige volle Tage, damit dort
+        // Tage frei bleiben (sonst nimmt der zuerst geplante Laden in der kurzen
+        // Randwoche drei 3-h-Tage und der zweite bekommt keinen).
+        ? Math.min(limit, Math.max(1, Math.ceil(target / Math.max(...eligible.map((date) =>
+            Math.min(MAX_PAID, openMinutesOfBlocks(days.get(date)!.blocks)))))))
+        : Math.min(limit, Math.max(1, Math.floor(target / MIN_SHIFT)));
 
   // ±1,5 h um den Durchschnitt: genug Spielraum, damit Stoßtage (Gewicht 1,5)
   // längere und Normaltage kürzere Dienste bekommen können.
@@ -334,6 +341,10 @@ function chooseWeekWith(
   // es gäbe keine einzige zulässige Dienstlänge, und die Person bekäme in der
   // Woche GAR NICHTS statt der möglichen 8 h.
   if (lo > hi) lo = hi;
+  // Passt das Soll ohnehin nicht in die Woche, jede Länge ab 3 h zulassen: ein
+  // Tag mit 7,5 h Öffnung (Mittag + Abend) fasst keinen 8-h-Dienst, und nur
+  // „8 h" hieße: an diesem Tag gar nichts.
+  if (hi * preferredCount < target) lo = MIN_SHIFT;
 
   const durations = new Set<number>();
   if (fixed) durations.add(fixed);
@@ -524,6 +535,188 @@ function topUpShortfalls(
   return shifts;
 }
 /**
+ * Gültige Pausenanfänge; läuft der Dienst durch eine Schließung (Mittag 15:00–
+ * 17:30), dann nur die, deren Pause ganz in der Schließung liegt – sofern es
+ * solche gibt. Sonst fehlt die Person mitten im Abendgeschäft.
+ */
+function pauseStartsFor(shift: Shift, blocks: DayBlocks): number[] {
+  const all = pauseStartCandidates(shift.startMinutes, shift.endMinutes, shift.pauseMinutes);
+  const inGap = all.filter((start) => blocks.some((block, index) => {
+    const next = blocks[index + 1];
+    return next != null && shift.startMinutes < block.endMinutes && shift.endMinutes > next.startMinutes &&
+      start >= block.endMinutes && start + shift.pauseMinutes <= next.startMinutes;
+  }));
+  return inGap.length > 0 ? inGap : all;
+}
+
+/**
+ * „Ca dài" (Quản lý oder Häkchen, siehe longShifts.ts) – nur wenn nach allen anderen Schritten
+ * noch Stunden fehlen: einen Tag mit Mittag + Abend zu EINEM Dienst durch die
+ * Mittagsschließung machen, Beginn ab 11:00. Die Pause (§ 4 ArbZG, ab 8 h bezahlt 60 min) legt
+ * makeShift in die ruhigste Zeit, also in die Schließung. Je Tag höchstens 9 h
+ * bezahlt; gewählt wird der Tag, der der Besetzung am wenigsten schadet.
+ */
+function extendLongDays(
+  result: Shift[],
+  employees: Employee[],
+  days: Map<string, Day>,
+  holidays: Set<string>,
+  dailyTargets: Map<string, number>,
+  targets: Map<string, number>,
+  ctx: Ctx,
+): Shift[] {
+  let shifts = [...result];
+  for (const employee of employees) {
+    if (!allowsLongDays(employee) || employee.fixedShift) continue;
+    const target = targets.get(employee.id) ?? 0;
+    const paidOf = (list: Shift[]) => list.reduce((sum, shift) => sum + shift.paidMinutes, 0);
+    for (let guard = 0; guard < 31; guard++) {
+      const own = shifts.filter((shift) => shift.employeeId === employee.id);
+      const missing = Math.floor((target - paidOf(own)) / SLOT) * SLOT;
+      if (missing < SLOT) break;
+      let best: { old: Shift[]; next: Shift; cost: number } | undefined;
+      for (const date of new Set(own.map((shift) => shift.date))) {
+        const day = days.get(date)!;
+        if (day.blocks.length < 2) continue;
+        const sameDay = own.filter((shift) => shift.date === date);
+        const current = paidOf(sameDay);
+        const capacity = openMinutesOfBlocks(day.blocks);
+        // Nur was über die Öffnungszeit hinausgeht – darunter reicht topUpShortfalls.
+        const paid = Math.min(LONG_PAID_MINUTES, current + missing);
+        if (paid <= Math.max(current, capacity)) continue;
+        const first = day.blocks[0];
+        const last = day.blocks[day.blocks.length - 1];
+        const presence = paid + calculatePause(paid);
+        const weekday = effectiveWeekdayKey(date, holidays);
+        const onDay = shifts.filter((shift) => shift.date === date);
+        const others = onDay.filter((shift) => !sameDay.includes(shift));
+        const before = dayCost(onDay, day.blocks, weekday, dailyTargets.get(date), ctx, date);
+        for (let start = Math.min(first.startMinutes, EARLY_START_MINUTES); start + presence <= last.endMinutes; start += SLOT) {
+          if (start >= first.endMinutes || start + presence <= last.startMinutes) continue; // muss beide Blöcke berühren
+          const made = makeShift(employee.id, date, start, paid, "EARLY", weekday, ctx);
+          const pauses = pauseStartsFor(made, day.blocks);
+          const next = pauses.includes(made.pauseStartMinutes!) ? made : { ...made, pauseStartMinutes: pauses[0] };
+          const cost = dayCost([...others, next], day.blocks, weekday, dailyTargets.get(date), ctx, date) - before;
+          if (!best || cost < best.cost) best = { old: sameDay, next, cost };
+        }
+      }
+      if (!best) break;
+      shifts = [...shifts.filter((shift) => !best!.old.includes(shift)), best.next];
+    }
+  }
+  return shifts;
+}
+
+/**
+ * Gruppenlücke schließen (z. B. Samstag ohne Phục vụ, weil die Betriebsleiterin
+ * samstags frei hat und die kurze Randwoche den anderen kaum Stunden lässt):
+ * einen ganzen Arbeitstag einer passenden Person aus einem anderen Tag des
+ * Monats hierher verlegen – gleiche bezahlte Zeit, 6-Tage-Regel und Tage je
+ * Woche bleiben eingehalten. Genommen wird der Tausch, der die Summe der
+ * beiden Tageskosten am stärksten senkt.
+ */
+function fillGroupGaps(
+  result: Shift[],
+  employees: Employee[],
+  days: Map<string, Day>,
+  holidays: Set<string>,
+  dailyTargets: Map<string, number>,
+  ctx: Ctx,
+): Shift[] {
+  let shifts = [...result];
+  const costOf = (date: string, list: Shift[]) =>
+    dayCost(list.filter((s) => s.date === date), days.get(date)!.blocks, effectiveWeekdayKey(date, holidays), dailyTargets.get(date), ctx, date);
+  const gapsOn = (date: string): ((employee: Employee) => boolean)[] => {
+    const day = days.get(date)!;
+    const weekday = effectiveWeekdayKey(date, holidays);
+    const model = dayModel(day.blocks, weekday, dailyTargets.get(date) ?? 0, ctx, holidays.has(date));
+    const onDay = shifts.filter((s) => s.date === date);
+    return model.windows.flatMap((window) => {
+      const who = window.who;
+      if (!who) return [];
+      const pool = onDay.filter((s) => { const e = ctx.employeesById.get(s.employeeId); return e ? who(e) : false; });
+      const short = window.slots.some((slot) => pool.filter((s) => workingAt(s, model.minutes[slot])).length < window.minStaff);
+      return short ? [who] : [];
+    });
+  };
+  for (const [date, day] of days) {
+    if (day.closed) continue;
+    // Mehrere Runden: erst einen Tag herholen, dann ggf. noch 30–90 min anstückeln.
+    for (let round = 0; round < 3; round++) {
+      const gaps = gapsOn(date);
+      if (gaps.length === 0) break;
+      let moved = false;
+      for (const who of gaps) {
+        const weekday = effectiveWeekdayKey(date, holidays);
+        const partialWeek = [...days].filter(([other, d]) => !d.closed && weekStartOf(other) === weekStartOf(date)).length < 6;
+        let best: { remove: Shift[]; add: Shift[]; gain: number } | undefined;
+        for (const employee of employees) {
+          if (!who(employee) || employee.fixedShift || !mayWorkOn(employee, date)) continue;
+          const busy = ctx.blocked.get(employee.id);
+          if (busy?.has(date)) continue;
+          const own = shifts.filter((s) => s.employeeId === employee.id);
+          if (own.some((s) => s.date === date)) continue;
+          for (const source of new Set(own.map((s) => s.date))) {
+            const moved = own.filter((s) => s.date === source);
+            const paid = moved.reduce((sum, s) => sum + s.paidMinutes, 0);
+            const worked = new Set([...(busy ?? []), ...own.map((s) => s.date)]);
+            worked.delete(source);
+            if (consecutiveRunLengthWith(worked, date) > 6) continue;
+            const week = weekStartOf(date);
+            const storeDays = new Set(own.map((s) => s.date).filter((d) => d !== source && weekStartOf(d) === week));
+            if (storeDays.size + 1 > dayLimit(employee)) continue;
+            if (new Set([...worked].filter((d) => weekStartOf(d) === week)).size + 1 > 6) continue;
+            const rest = shifts.filter((s) => !moved.includes(s));
+            const before = costOf(source, shifts) + costOf(date, shifts);
+            for (const option of optionsFor(employee, date, paid, day.blocks, partialWeek, weekday, ctx)) {
+              const next = [...rest, ...option.shifts];
+              const gain = before - costOf(source, next) - costOf(date, next);
+              if (gain > 1e-9 && (!best || gain > best.gain)) best = { remove: moved, add: option.shifts, gain };
+            }
+          }
+        }
+        // Wer schon da ist, aber die Lücke nicht ganz deckt (4 h im 4,5-h-Abendblock):
+        // hier 30–90 min länger, an einem anderen eigenen Tag genauso viel kürzer.
+        for (const employee of employees) {
+          if (!who(employee) || employee.fixedShift) continue;
+          const own = shifts.filter((s) => s.employeeId === employee.id);
+          const here = own.filter((s) => s.date === date);
+          if (here.length === 0) continue;
+          const paidOf = (list: Shift[]) => list.reduce((sum, s) => sum + s.paidMinutes, 0);
+          for (let extra = SLOT; extra <= 3 * SLOT; extra += SLOT) {
+            if (paidOf(here) + extra > MAX_PAID) break;
+            for (const source of new Set(own.map((s) => s.date).filter((d) => d !== date))) {
+              const there = own.filter((s) => s.date === source);
+              if (paidOf(there) - extra < MIN_SHIFT) continue;
+              const sourceDay = days.get(source)!;
+              const sourceWeekday = effectiveWeekdayKey(source, holidays);
+              const sourcePartial = [...days].filter(([other, d]) => !d.closed && weekStartOf(other) === weekStartOf(source)).length < 6;
+              const rest = shifts.filter((s) => !here.includes(s) && !there.includes(s));
+              const before = costOf(source, shifts) + costOf(date, shifts);
+              const shorter = optionsFor(employee, source, paidOf(there) - extra, sourceDay.blocks, sourcePartial, sourceWeekday, ctx);
+              const longer = optionsFor(employee, date, paidOf(here) + extra, day.blocks, partialWeek, weekday, ctx);
+              const bestOf = (options: Option[], on: string, base: Shift[]) => options
+                .map((option) => ({ option, cost: costOf(on, [...base, ...option.shifts]) }))
+                .sort((a, b) => a.cost - b.cost)[0];
+              const a = bestOf(shorter, source, rest);
+              const b = bestOf(longer, date, rest);
+              if (!a || !b) continue;
+              const gain = before - a.cost - b.cost;
+              if (gain > 1e-9 && (!best || gain > best.gain)) {
+                best = { remove: [...here, ...there], add: [...a.option.shifts, ...b.option.shifts], gain };
+              }
+            }
+          }
+        }
+        if (best) { shifts = [...shifts.filter((s) => !best!.remove.includes(s)), ...best.add]; moved = true; }
+      }
+      if (!moved) break;
+    }
+  }
+  return shifts;
+}
+
+/**
  * Final per-day polish, keeping every person's paid minutes for the day:
  *  1. move a person's shift(s) to a better start (all 30-minute options),
  *  2. move each pause to the valid pause start that fits the REAL headcount –
@@ -559,7 +752,7 @@ function improveCoverage(result: Shift[], employees: Employee[], days: Map<strin
         const others = onDay.filter((_, k) => k !== i);
         let bestCost = dayCost(onDay, day.blocks, weekday, target, ctx, date);
         let best: Shift | undefined;
-        for (const start of pauseStartCandidates(shift.startMinutes, shift.endMinutes, shift.pauseMinutes)) {
+        for (const start of pauseStartsFor(shift, day.blocks)) {
           if (start === shift.pauseStartMinutes) continue;
           const moved = { ...shift, pauseStartMinutes: start };
           const cost = dayCost([...others, moved], day.blocks, weekday, target, ctx, date);
@@ -694,6 +887,24 @@ export function generateWeeklySchedule(input: WeeklyInput, existing: Shift[] = [
       result.push(...choices.flatMap((choice) => choice.option.shifts));
     }
   }
+  // Monatsvertrag: Was eine Woche nicht fassen konnte (z. B. „tối đa 3 ngày/tuần"
+  // × 7,5 h < Wochenanteil), darf in eine andere Woche desselben Monats wandern,
+  // die noch Platz hat – sonst fehlen am Monatsende Stunden, obwohl die kurze
+  // Randwoche einen freien vollen Tag gehabt hätte.
+  for (const employee of employees) {
+    if (employee.weeklyHours != null || employee.fixedShift) continue;
+    const target = monthlyTargetMinutesFor(employee, openDates, input.workHours);
+    const paidOf = (shifts: Shift[]) => shifts.reduce((sum, shift) => sum + shift.paidMinutes, 0);
+    for (const [weekStart, weekDates] of [...byWeek].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const missing = target - paidOf(result.filter((s) => s.employeeId === employee.id));
+      if (missing < SLOT) break;
+      const own = result.filter((s) => s.employeeId === employee.id && weekStartOf(s.date) === weekStart);
+      const others = result.filter((s) => !own.includes(s));
+      const choices = chooseWeek(employee, weekDates, paidOf(own) + missing, others, days, holidays, dailyTargets, ctx);
+      const next = choices.flatMap((choice) => choice.option.shifts);
+      if (paidOf(next) > paidOf(own)) result = [...others, ...next];
+    }
+  }
   // Refit to actual available hours (new hires can reduce a week's budget).
   for (const [, weekDates] of byWeek) {
     const actual = result.filter((s) => weekDates.includes(s.date)).reduce((sum, s) => sum + s.paidMinutes, 0) / 60;
@@ -735,6 +946,9 @@ export function generateWeeklySchedule(input: WeeklyInput, existing: Shift[] = [
       .map((employee) => [employee.id, budgets.get(employee.id)!] as const),
   );
   result = topUpShortfalls(result, employees, days, holidays, dailyTargets, monthlyTargets, weeklyCaps, ctx);
+  // Wochenverträge bleiben an ihrer Woche – nur Monatsverträge dürfen den Tag tauschen.
+  result = fillGroupGaps(result, employees.filter((employee) => employee.weeklyHours == null), days, holidays, dailyTargets, ctx);
+  result = extendLongDays(result, employees, days, holidays, dailyTargets, monthlyTargets, ctx);
 
   return improveCoverage(result, employees, days, holidays, dailyTargets, ctx)
     .sort((a, b) => a.date.localeCompare(b.date) || a.startMinutes - b.startMinutes || a.employeeId.localeCompare(b.employeeId));

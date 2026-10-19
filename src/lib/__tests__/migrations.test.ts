@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { Employee, Schedule } from "../../types";
-import { applyMigrations, MIGRATION_DEMO_SEED, MIGRATION_THU_VAN_NIEU } from "../migrations";
+import { applyMigrations, MIGRATION_DEMO_SEED, MIGRATION_THU_VAN_NIEU, MIGRATION_VAN_SATURDAY_OFF } from "../migrations";
 import { makeEmployee } from "../sampleData";
 import { DEFAULT_WORK_HOURS } from "../workHours";
 
@@ -97,5 +97,23 @@ describe("Demo: 10 nhân viên mẫu", () => {
     const once = applyMigrations("demo", empty());
     const cleared = applyMigrations("demo", { ...once, employees: [] });
     expect(cleared.employees).toEqual([]);
+  });
+});
+
+describe("Trần Thanh Vân: Betriebsleiterin Khang + Ngon, samstags frei, 18 €/h", () => {
+  it("trägt den freien Samstag in beiden Läden nach, genau einmal", () => {
+    for (const store of ["khang", "ngon"]) {
+      const van = { ...makeEmployee(`${store}-van`, "Trần Thanh Vân", "TEILZEIT", 108), role: "Quản lý", personKey: "tran-thanh-van", monthlySalary: 1500, hourlyRate: 13.9 };
+      const once = applyMigrations(store, stand([van]));
+      expect(once.employees[0].availableWeekdays).toEqual(["monday", "tuesday", "wednesday", "thursday", "friday", "sunday"]);
+      expect(once.employees[0].role).toBe("Quản lý (Betriebsleiter)");
+      expect(once.employees[0].hourlyRate).toBe(18);
+      expect(once.employees[0].longShifts).toBe(true);
+      expect(once.employees[0].targetMinutes).toBe(5000); // 1.500 € ÷ 18 € = 83,3 h
+      expect(once.migrations).toContain(MIGRATION_VAN_SATURDAY_OFF);
+      // Danach wieder Samstag erlaubt → bleibt so (läuft nur einmal).
+      const edited = { ...once, employees: [{ ...once.employees[0], availableWeekdays: undefined }] };
+      expect(applyMigrations(store, edited).employees[0].availableWeekdays).toBeUndefined();
+    }
   });
 });

@@ -11,6 +11,13 @@ function salary(id: string, name: string, amount: number, rate: number, role: st
   return { ...staff(id, name, amount / rate, role), monthlySalary: amount, hourlyRate: rate,
     targetMinutes: salaryToMinutes(amount, rate), referenceEstimated: true };
 }
+/** Betriebsleiterin beider Läden (18 €/h): je Laden höchstens 3 Tage, samstags immer frei, notfalls Tage bis 9 h. */
+const VAN = {
+  personKey: "tran-thanh-van",
+  maxDaysPerWeek: 3,
+  longShifts: true,
+  availableWeekdays: ["monday", "tuesday", "wednesday", "thursday", "friday", "sunday"],
+} satisfies Partial<Employee>;
 export function khangEmployees(): Employee[] {
   return [
     staff("khang-khanh", "Phạm H. N. Khanh", 42, "Phục vụ", 14),
@@ -18,7 +25,7 @@ export function khangEmployees(): Employee[] {
     staff("khang-chat", "Phạm Văn Chất", 172, "Sushi/Bar", 28),
     staff("khang-ha", "Nguyễn Mạnh Hà", 154, "Phục vụ", 22),
     staff("khang-toan", "Vũ Văn Toàn", 176, "Bếp", 25),
-    { ...salary("khang-van", "Trần Thanh Vân", 1500, 13.9, "Quản lý"), personKey: "tran-thanh-van", maxDaysPerWeek: 3 },
+    { ...salary("khang-van", "Trần Thanh Vân", 1500, 18, "Quản lý (Betriebsleiter)"), ...VAN },
     salary("khang-hoa", "Nguyễn Hữu Hòa", 1500, 13.9, "Phụ bếp"),
     salary("khang-duong-khanh", "Dương Thị Khánh", 603, 13.9, "Phục vụ"),
   ];
@@ -31,7 +38,7 @@ export function ngonEmployees(): Employee[] {
     staff("ngon-ly", "Phạm Văn Lý", 160, "Bếp", 20),
     staff("ngon-trung", "Phạm Quốc Trung", 166, "Bếp (K → N)", 26),
     { ...staff("ngon-anh", "Đặng Việt Anh", 110, "Phục vụ", 22), referenceEstimated: true },
-    { ...salary("ngon-van", "Trần Thanh Vân", 1500, 13.9, "Quản lý"), personKey: "tran-thanh-van", maxDaysPerWeek: 3 },
+    { ...salary("ngon-van", "Trần Thanh Vân", 1500, 18, "Quản lý (Betriebsleiter)"), ...VAN },
     salary("ngon-duy", "Nguyễn Đức Duy", 2500, 15, "Bar"),
   ];
 }

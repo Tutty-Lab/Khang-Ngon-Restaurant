@@ -10,6 +10,7 @@
 
 import type { Employee, Schedule } from "../types";
 import { demoEmployees, makeEmployee } from "./sampleData";
+import { salaryToMinutes } from "./payroll";
 
 /** Thu Vân Nguyễn: Vollzeit im Coco, ab September 2026 zusätzlich Minijob 43 h im Nieu. */
 export const MIGRATION_THU_VAN_NIEU = "2026-10-thu-van-nieu";
@@ -59,6 +60,35 @@ function thuVanNieu(storeId: string, employees: Employee[]): Employee[] {
  */
 export const MIGRATION_DEMO_SEED = "2026-10-demo-seed-10";
 
+/**
+ * Trần Thanh Vân ist Betriebsleiterin von Khang UND Ngon, hat samstags immer
+ * frei, bekommt 18 €/h (1.500 € je Laden → 83,3 h statt 107,9 h bei 13,90 €) und
+ * darf notfalls 9-h-Tage durch die Mittagsschließung machen.
+ * Bereits gespeicherte Stände bekommen freien Samstag, Stundenlohn, Soll und
+ * Rollenbezeichnung nachgetragen; andere Wochentagssperren bleiben erhalten.
+ */
+export const MIGRATION_VAN_SATURDAY_OFF = "2026-10-van-betriebsleiter-sat-off";
+const VAN_KEY = "tran-thanh-van";
+const VAN_RATE = 18;
+
+function vanSaturdayOff(storeId: string, employees: Employee[]): Employee[] {
+  if (storeId !== "khang" && storeId !== "ngon") return employees;
+  const allDays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
+  return employees.map((employee) => {
+    if (employee.personKey !== VAN_KEY && nameKey(employee.name) !== nameKey("Tran Thanh Van")) return employee;
+    const days = employee.availableWeekdays?.length ? employee.availableWeekdays : [...allDays];
+    return {
+      ...employee,
+      personKey: VAN_KEY,
+      role: employee.role === "Quản lý" || !employee.role ? "Quản lý (Betriebsleiter)" : employee.role,
+      availableWeekdays: days.filter((day) => day !== "saturday"),
+      hourlyRate: VAN_RATE,
+      longShifts: true,
+      ...(employee.monthlySalary != null ? { targetMinutes: salaryToMinutes(employee.monthlySalary, VAN_RATE) } : {}),
+    };
+  });
+}
+
 /** Wendet alle noch offenen Änderungen auf den Stand einer Filiale an. */
 export function applyMigrations(storeId: string, schedule: Schedule): Schedule {
   let next = schedule;
@@ -69,6 +99,9 @@ export function applyMigrations(storeId: string, schedule: Schedule): Schedule {
   if (!done().includes(MIGRATION_DEMO_SEED)) {
     const seed = storeId === "demo" && next.employees.length === 0;
     next = { ...next, employees: seed ? demoEmployees() : next.employees, migrations: [...done(), MIGRATION_DEMO_SEED] };
+  }
+  if (!done().includes(MIGRATION_VAN_SATURDAY_OFF)) {
+    next = { ...next, employees: vanSaturdayOff(storeId, next.employees), migrations: [...done(), MIGRATION_VAN_SATURDAY_OFF] };
   }
   return next;
 }
