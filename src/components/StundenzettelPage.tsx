@@ -46,10 +46,6 @@ export function StundenzettelPage({
   }
   for (const liste of byDate.values()) liste.sort((a, b) => a.startMinutes - b.startMinutes);
 
-  // Summe nur über die gezeigten Tage – beim Wochen-Zettel zählt nur die Woche.
-  const totalMinutes = rows
-    .flatMap((d) => byDate.get(d) ?? [])
-    .reduce((a, s) => a + s.paidMinutes, 0);
   const holidayNames = publicHolidayNames(schedule.year);
   const closedByDate = new Map(
     schedule.dateOverrides.filter((o) => o.closed).map((o) => [o.date, o] as const),
@@ -206,21 +202,21 @@ export function StundenzettelPage({
             <Td className="text-left" colSpan={4}>
               Gesamtstunden
             </Td>
-            <Td className="text-center">{minutesToDecimalHours(totalMinutes)}</Td>
+            <Td />
             <Td />
           </tr>
         </tfoot>
       </table>
 
       {/*
-        Geleistete Stunden – kein Soll, keine Differenz (Vorgabe des Betriebs).
-        Nacht/Sonntag bleiben leer: der Betrieb gleicht mit der Übersicht
+        Kein Soll, keine Differenz (Vorgabe des Betriebs). Gesamt-, Nacht- und
+        Sonntagsstunden bleiben leer: der Betrieb gleicht mit der Übersicht
         (Seite 1 der PDF) ab und trägt von Hand ein.
       */}
       <div className="mt-3 grid grid-cols-3 gap-4 text-[12px]">
         <div>
           <div className="text-slate-500">Gesamtstunden</div>
-          <div className="font-semibold">{minutesToDecimalHours(totalMinutes)} h</div>
+          <BlankLine />
         </div>
         <div>
           <div className="text-slate-500">Nachtstunden (ab 20 Uhr)</div>

@@ -201,7 +201,7 @@ function stundenzettelRowsFor(
   schedule: Schedule,
   employee: Employee,
   dates: string[],
-): { rows: DayRow[]; totalMinutes: number } {
+): { rows: DayRow[] } {
   const byDate = new Map<string, Shift[]>();
   for (const s of schedule.shifts) {
     if (s.employeeId !== employee.id) continue;
@@ -216,10 +216,8 @@ function stundenzettelRowsFor(
     schedule.dateOverrides.filter((o) => o.closed).map((o) => [o.date, o] as const),
   );
 
-  let totalMinutes = 0;
   const rows: DayRow[] = dates.map((d) => {
     const dienste = byDate.get(d) ?? [];
-    totalMinutes += dienste.reduce((a, s) => a + s.paidMinutes, 0);
     const wd = WEEKDAY_LABELS_DE[weekdayKeyOf(parseIsoDate(d))];
     const holiday = holidayNames.get(d);
     const closed = closedByDate.get(d);
@@ -248,7 +246,7 @@ function stundenzettelRowsFor(
     };
   });
 
-  return { rows, totalMinutes };
+  return { rows };
 }
 
 // Spalten des Stundenzettels: x-Position, Breite, Ausrichtung. Rechte Kante 196.
@@ -286,7 +284,6 @@ function drawStundenzettelTable(
   doc: jsPDF,
   startY: number,
   rows: DayRow[],
-  totalMinutes: number,
   maxBottom: number,
 ): void {
   const BASE_FS = 6.5; // Schriftgröße (pt)
@@ -413,12 +410,11 @@ function drawStundenzettelTable(
     y += h;
   });
 
-  // ---- Fußzeile (Gesamtstunden) ----
+  // ---- Fußzeile (Gesamtstunden – leer, der Betrieb trägt von Hand ein) ----
   const footTop = y;
   doc.setFillColor(...HEAD_FILL);
   doc.rect(SZ_LEFT, y, SZ_RIGHT - SZ_LEFT, footH, "F");
   drawCellText("Gesamtstunden", 0, grundlinie(y + footH / 2), "bold", INK);
-  drawCellText(minutesToDecimalHours(totalMinutes), 4, grundlinie(y + footH / 2), "bold", INK);
   y += footH;
   const tableBottom = y;
 
@@ -452,11 +448,11 @@ function drawStundenzettel(
     startY,
   );
 
-  const { rows, totalMinutes } = stundenzettelRowsFor(schedule, employee, dates);
+  const { rows } = stundenzettelRowsFor(schedule, employee, dates);
 
   // Unter der Tabelle liegen Summe (ab pageH − 30) und Unterschriften – die
   // Tabelle hört spätestens 5 mm darüber auf.
-  drawStundenzettelTable(doc, infoY, rows, totalMinutes, doc.internal.pageSize.getHeight() - 35);
+  drawStundenzettelTable(doc, infoY, rows, doc.internal.pageSize.getHeight() - 35);
 
   // Zusammenfassung + Unterschriften: FESTE Positionen im reservierten Band am
   // Seitenende – unabhängig davon, wo die Tabelle endet (keine Kollision mehr).
@@ -466,8 +462,8 @@ function drawStundenzettel(
   const col3 = (pageW - 2 * MARGIN) / 3;
 
   const summary: Array<[string, string | null]> = [
-    ["Gesamtstunden", `${minutesToDecimalHours(totalMinutes)} h`],
-    // Leer: der Betrieb gleicht mit der Übersicht (Seite 1) ab und trägt von Hand ein.
+    // Alles leer: der Betrieb gleicht mit der Übersicht (Seite 1) ab und trägt von Hand ein.
+    ["Gesamtstunden", null],
     ["Nachtstunden (ab 20 Uhr)", null],
     ["Sonntagsstunden", null],
   ];
