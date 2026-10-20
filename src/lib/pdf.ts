@@ -615,7 +615,8 @@ function drawUebersicht(
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.5);
   doc.setTextColor(...MUTED);
-  doc.text(T("Nachtstunden: bezahlte Arbeitszeit ab 20:00 Uhr (ohne Pause). Sonntagsstunden: bezahlte Arbeitszeit an Sonntagen. Angaben in Stunden."), left, y);
+  const note = "Nachtstunden: bezahlte Arbeitszeit ab 20:00 Uhr (ohne Pause), ohne Sonntage. Sonntagsstunden: gesamte bezahlte Arbeitszeit an Sonntagen (nicht doppelt als Nacht gezählt). Angaben in Stunden.";
+  doc.text(doc.splitTextToSize(T(note), right - left), left, y);
 }
 
 // ── Datei ausliefern ─────────────────────────────────────────────────────────

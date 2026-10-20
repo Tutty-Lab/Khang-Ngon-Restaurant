@@ -2,6 +2,8 @@
 // Zuschlagsstunden für die Übersicht auf Seite 1 der PDFs:
 //  - Nachtstunden: bezahlte Minuten ab 20:00 (§ 3b EStG, 20–6 Uhr),
 //  - Sonntagsstunden: bezahlte Minuten an einem Sonntag.
+// Sonntags zählt alles NUR als Sonntag, nicht zusätzlich als Nacht (Vorgabe
+// des Betriebs: keine doppelte Zählung).
 // Die Pause zählt nicht mit; liegt sie nach 20:00, fällt sie heraus.
 // ============================================================================
 
@@ -34,8 +36,9 @@ export function hourStatsFor(shifts: readonly Shift[], employeeId: string, dates
   for (const shift of shifts) {
     if (shift.employeeId !== employeeId || !inRange.has(shift.date)) continue;
     stats.total += shift.paidMinutes;
-    stats.night += nightMinutes(shift);
-    stats.sunday += sundayMinutes(shift);
+    const sunday = sundayMinutes(shift);
+    stats.sunday += sunday;
+    if (sunday === 0) stats.night += nightMinutes(shift);
   }
   return stats;
 }

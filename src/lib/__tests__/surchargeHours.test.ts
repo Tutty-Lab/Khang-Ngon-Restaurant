@@ -23,7 +23,10 @@ describe("Nacht- und Sonntagsstunden", () => {
   });
   it("summiert je Person im Zeitraum", () => {
     const shifts = [shift("2026-10-04", 17 * 60, 22 * 60), shift("2026-10-05", 11 * 60, 15 * 60), shift("2026-11-01", 17 * 60, 22 * 60)];
-    expect(hourStatsFor(shifts, "a", ["2026-10-04", "2026-10-05"])).toEqual({ total: 540, night: 120, sunday: 300 });
+    // 04.10. ist Sonntag: 17–22 Uhr zählt nur als Sonntag, nicht als Nacht.
+    expect(hourStatsFor(shifts, "a", ["2026-10-04", "2026-10-05"])).toEqual({ total: 540, night: 0, sunday: 300 });
+    const weekday = [shift("2026-10-05", 17 * 60, 22 * 60)];
+    expect(hourStatsFor(weekday, "a", ["2026-10-05"])).toEqual({ total: 300, night: 120, sunday: 0 });
   });
 });
 
