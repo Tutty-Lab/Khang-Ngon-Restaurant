@@ -26,8 +26,13 @@ export type StoreConfig = {
   staffingRules: readonly StaffingRule[];
 };
 
-const lunch = { startMinutes: 720, endMinutes: 900 };
-const evening = { startMinutes: 1050, endMinutes: 1320 };
+// Chủ quán (10/2026): khách 11:30–15:00 và 17:00–22:00, 15:00–16:30 nghỉ thật.
+// Giờ LÀM bắt đầu sớm 30 phút (11:00 / 16:30) để Vorbereitung; luật nhóm
+// „ít nhất 1 Bếp + 1 Phục vụ" giữ 2 người trông quán ngay từ lúc đó.
+export const LUNCH_BLOCK = { startMinutes: 660, endMinutes: 900 };
+export const EVENING_BLOCK = { startMinutes: 990, endMinutes: 1320 };
+const lunch = LUNCH_BLOCK;
+const evening = EVENING_BLOCK;
 function hours(ngon: boolean): WorkHoursConfig {
   return {
     perWeekday: { monday: [lunch, evening], tuesday: [lunch, evening], wednesday: [lunch, evening],
@@ -69,19 +74,21 @@ export const STORES: StoreConfig[] = [
     address: "Einsteinstraße 179, 81677 München", sampleEmployees: khangEmployees,
     workHours: hours(false), staffingRules: khangRules,
     dayWeights: { monday: 1, tuesday: 1.5, wednesday: 1.5, thursday: 1.5, friday: 1, saturday: 1, sunday: 1 },
-    notes: "Đông thứ 3/4/5. Chủ nhật chủ yếu giao hàng, mang về. Nghỉ trưa thứ 7, chủ nhật, ngày lễ. Pause 15:00–17:00; ca tối bắt đầu 17:30." },
+    notes: "Đông thứ 3/4/5. Chủ nhật chủ yếu giao hàng, mang về. Nghỉ trưa thứ 7, chủ nhật, ngày lễ. Khách 11:30–15:00 / 17:00–22:00; làm từ 11:00 / 16:30 (chuẩn bị); pause 15:00–16:30." },
   { id: "ngon", name: "Ngon Soulfood", shortName: "Ngon",
     address: "Ostpreußenstraße 35, 81827 München", sampleEmployees: ngonEmployees,
     workHours: hours(true), staffingRules: groupRules,
     demandProfile: [
-      { startMinutes: 720, endMinutes: 780, level: 1, label: "Mở cửa" },
+      { startMinutes: 660, endMinutes: 690, level: 0.5, label: "Chuẩn bị" },
+      { startMinutes: 690, endMinutes: 780, level: 1, label: "Mở cửa" },
       { startMinutes: 780, endMinutes: 900, level: 1.5, label: "Cao điểm trưa" },
-      { startMinutes: 1050, endMinutes: 1080, level: 1, label: "Mở ca tối" },
+      { startMinutes: 990, endMinutes: 1020, level: 0.5, label: "Chuẩn bị" },
+      { startMinutes: 1020, endMinutes: 1080, level: 1, label: "Mở ca tối" },
       { startMinutes: 1080, endMinutes: 1260, level: 1.5, label: "Cao điểm tối" },
       { startMinutes: 1260, endMinutes: 1320, level: 0.8, label: "Cuối ca" },
     ],
     dayWeights: { monday: 1, tuesday: 1, wednesday: 1, thursday: 1.5, friday: 1.8, saturday: 0, sunday: 1.8 },
-    notes: "Đông thứ 5/6/CN; doanh thu cao nhất thứ 6/CN. Cao điểm 13:00–15:00, 18:00–21:00. Nghỉ thứ 7, trưa lễ. Pause 15:00–17:00; ca tối bắt đầu 17:30." },
+    notes: "Đông thứ 5/6/CN; doanh thu cao nhất thứ 6/CN. Cao điểm 13:00–15:00, 18:00–21:00. Nghỉ thứ 7, trưa lễ. Khách 11:30–15:00 / 17:00–22:00; làm từ 11:00 / 16:30 (chuẩn bị); pause 15:00–16:30." },
 ];
 
 export const DEFAULT_STORE_ID = STORES[0].id;

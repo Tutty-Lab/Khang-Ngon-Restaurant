@@ -141,7 +141,7 @@ function BlockRow({
 }
 
 export function SettingsTab({ store }: { store: UseScheduleReturn }) {
-  const { schedule, updateMeta, upsertOverride, removeOverride, changePassword } = store;
+  const { schedule, updateMeta, upsertOverride, removeOverride, changePassword, updateEmployee } = store;
 
   // ---- Ngày đặc biệt (Ausnahmen) ----
   const monthDates = useMemo(
@@ -233,6 +233,31 @@ export function SettingsTab({ store }: { store: UseScheduleReturn }) {
           <div className="md:col-span-2 text-xs text-slate-500">
             Tháng/năm chọn chung cho mọi quán ở thanh trên cùng — bản in của hai quán phải cùng kỳ.
           </div>
+        </div>
+      </section>
+
+      {/* „Không Zuschlag": wer keine Zuschläge bekommt, wird nie nach 20:00, sonntags oder an Feiertagen geplant. */}
+      <section className="rounded-lg bg-white border border-slate-200 p-4 sm:p-5 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">Nhân viên không nhận Zuschlag</h2>
+        <p className="mt-1 mb-3 text-xs text-slate-500">
+          Người được chọn sẽ không bị xếp làm sau 20:00, Chủ nhật hay ngày lễ. Bấm „Tạo lịch" lại để áp dụng.
+        </p>
+        <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          Áp dụng cho mọi nhân viên: nếu xếp hết giờ làm bình thường mà vẫn thiếu giờ hợp đồng, app cho đến sớm —
+          ca trưa từ 10:30 (sớm nhất 10:00), ca tối từ 16:00. Mỗi ngày vẫn tối đa 8 giờ.
+        </p>
+        <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+          {schedule.employees.map((employee) => (
+            <label key={employee.id} className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2.5">
+              <span className="text-sm text-slate-700">{employee.name}</span>
+              <input
+                type="checkbox"
+                checked={employee.noSurcharge === true}
+                onChange={(e) => updateEmployee(employee.id, { noSurcharge: e.target.checked ? true : undefined })}
+                className="h-5 w-5 shrink-0 rounded border-slate-300"
+              />
+            </label>
+          ))}
         </div>
       </section>
 

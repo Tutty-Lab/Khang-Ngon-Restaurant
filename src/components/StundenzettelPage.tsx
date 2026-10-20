@@ -212,11 +212,23 @@ export function StundenzettelPage({
         </tfoot>
       </table>
 
-      {/* Nur die tatsächlich geleisteten Stunden – kein Soll, keine Differenz (Vorgabe des Betriebs). */}
+      {/*
+        Geleistete Stunden – kein Soll, keine Differenz (Vorgabe des Betriebs).
+        Nacht/Sonntag bleiben leer: der Betrieb gleicht mit der Übersicht
+        (Seite 1 der PDF) ab und trägt von Hand ein.
+      */}
       <div className="mt-3 grid grid-cols-3 gap-4 text-[12px]">
         <div>
           <div className="text-slate-500">Gesamtstunden</div>
           <div className="font-semibold">{minutesToDecimalHours(totalMinutes)} h</div>
+        </div>
+        <div>
+          <div className="text-slate-500">Nachtstunden (ab 20 Uhr)</div>
+          <BlankLine />
+        </div>
+        <div>
+          <div className="text-slate-500">Sonntagsstunden</div>
+          <BlankLine />
         </div>
       </div>
 
@@ -236,6 +248,11 @@ function Info({ label, value }: { label: string; value: string }) {
       <span className="font-medium">{value}</span>
     </div>
   );
+}
+
+/** Leere Schreiblinie – Feld, das der Betrieb von Hand ergänzt. */
+function BlankLine() {
+  return <div className="border-b border-slate-400 h-[1.2em] w-full max-w-[80px]" />;
 }
 
 function Th({ children, className = "" }: { children?: React.ReactNode; className?: string }) {

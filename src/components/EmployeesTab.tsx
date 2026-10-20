@@ -76,6 +76,8 @@ type Draft = {
   shiftMax: string;
   spreadEvenly: boolean;
   longShifts: boolean;
+  /** „Không Zuschlag": kein CN, kein Lễ, Ende spätestens 20:00. */
+  noSurcharge: boolean;
   windows: { days: WeekdayKey[]; start: string; end: string }[];
   startDate: string; // "yyyy-MM-dd" hoặc "" = từ đầu tháng
   endDate: string; // "yyyy-MM-dd" hoặc "" = vẫn đang làm
@@ -110,6 +112,7 @@ function draftFrom(emp?: Employee, partners: PartnerChoice = {}): Draft {
     shiftMax: emp?.shiftHours ? hoursText(emp.shiftHours.max) : "",
     spreadEvenly: emp?.spreadEvenly === true,
     longShifts: emp?.longShifts === true,
+    noSurcharge: emp?.noSurcharge === true,
     windows: (emp?.preferredWindows ?? []).map((w) => ({
       days: [...w.days],
       start: minutesToTime(w.startMinutes),
@@ -186,6 +189,7 @@ function draftToEmployee(d: Draft): Omit<Employee, "id"> {
     shiftHours: shiftHoursFromDraft(d),
     spreadEvenly: d.spreadEvenly ? true : undefined,
     longShifts: d.longShifts ? true : undefined,
+    noSurcharge: d.noSurcharge ? true : undefined,
     preferredWindows: windowsFromDraft(d),
     // Leeres Feld = von Monatsanfang an dabei (kein Eintrittsdatum).
     startDate: /^\d{4}-\d{2}-\d{2}$/.test(d.startDate) ? d.startDate : undefined,
@@ -396,6 +400,9 @@ function EmployeeSummaryRow({
             ca {minutesToShortHours(ownRange.min)}–{minutesToShortHours(ownRange.max)}
             {emp.spreadEvenly ? " · rải đều" : ""}
           </span>
+        ) : null}
+        {emp.noSurcharge ? (
+          <span className="rounded bg-slate-100 text-slate-600 px-1.5 py-0.5">không Zuschlag</span>
         ) : null}
         {emp.longShifts ? (
           <span className="rounded bg-slate-100 text-slate-600 px-1.5 py-0.5">ca dài tới 9h</span>
@@ -825,6 +832,12 @@ function EmployeeSheet({
                   </SheetSection>
 
                   <SheetSection title="Luật cứng">
+                    <CheckRow
+                      label="Không Zuschlag"
+                      note="Không xếp Chủ nhật, ngày lễ; ca kết thúc muộn nhất 20:00."
+                      checked={d.noSurcharge}
+                      onChange={(v) => set("noSurcharge", v)}
+                    />
                     <CheckRow
                       label="Trực ngày lễ"
                       note="Ngày lễ nào quán mở thì người này luôn có ca."

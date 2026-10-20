@@ -4,6 +4,7 @@
 
 import type { Employee, Shift } from "../types";
 import { allowsLongDays, LONG_PAID_MINUTES } from "./longShifts";
+import { NO_SURCHARGE_END, surchargeFree } from "./personalHours";
 import { monthlyTargetMinutes, monthlyTargetMinutesFor, SCHEDULE_SLOT_MINUTES } from "./contract";
 import { calculatePause, minutesToShortHours } from "./time";
 import { maxConsecutiveRun } from "./consecutive";
@@ -95,6 +96,7 @@ export function validateSchedule(
     shiftsByEmployee.get(shift.employeeId)!.push(shift);
   }
 
+  const holidaySet = new Set([...publicHolidayNames(_year)].map(([date]) => date));
   // Regeln je einzelner Schicht.
   for (const shift of shifts) {
     const presence = shift.endMinutes - shift.startMinutes;
@@ -103,6 +105,13 @@ export function validateSchedule(
     const employee = employeeById.get(shift.employeeId);
     if (employee && !mayWorkOn(employee, shift.date)) errors.push({ employeeId: employee.id, date: shift.date, rule: "days-off",
       message: `${employee.name}: đã xếp vào ngày không thể làm ${shift.date}.`,
+    });
+    // „Không Zuschlag": kein Sonntag, kein Feiertag, Ende spätestens 20:00.
+    if (employee?.noSurcharge && !surchargeFree(employee, shift.date, holidaySet)) errors.push({ employeeId: employee.id, date: shift.date, rule: "days-off",
+      message: `${employee.name}: không Zuschlag nhưng có ca Chủ nhật/ngày lễ ${shift.date}.`,
+    });
+    if (employee?.noSurcharge && shift.endMinutes > NO_SURCHARGE_END) errors.push({ employeeId: employee.id, date: shift.date, rule: "shift-length",
+      message: `${employee.name}: không Zuschlag nhưng ca ${shift.date} kết thúc sau 20:00.`,
     });
     if (shift.pauseStartMinutes != null && !validPause(shift)) errors.push({ employeeId: shift.employeeId, date: shift.date, rule: "shift-length",
       message: `Giờ nghỉ không hợp lệ ngày ${shift.date}.`,

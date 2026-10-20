@@ -91,6 +91,11 @@ export type Employee = {
    */
   longShifts?: boolean;
   /**
+   * „Không Zuschlag": kein Sonntag, kein Feiertag, Dienstende spätestens 20:00
+   * (keine Sonntags-, Feiertags- oder Nachtzuschläge).
+   */
+  noSurcharge?: boolean;
+  /**
    * Muss diese Person an FEIERTAGEN im Dienst sein?
    *
    * Vorgabe des Betriebs: „Những ngày lễ phải có bạn Bá Việt Nguyen trong ca".

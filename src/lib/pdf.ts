@@ -31,6 +31,7 @@ import { MONTH_NAMES_DE } from "./dateFormat";
 import { employmentLabelDe } from "./employment";
 import { publicHolidayNames, publicHolidays } from "./holidays";
 import { isDayClosed } from "./workHours";
+import { hourStatsFor } from "./surchargeHours";
 import { format } from "date-fns";
 
 /** Dateiname säubern: Umlaute/Akzente weg, nur unbedenkliche Zeichen behalten. */
@@ -466,6 +467,9 @@ function drawStundenzettel(
 
   const summary: Array<[string, string | null]> = [
     ["Gesamtstunden", `${minutesToDecimalHours(totalMinutes)} h`],
+    // Leer: der Betrieb gleicht mit der Übersicht (Seite 1) ab und trägt von Hand ein.
+    ["Nachtstunden (ab 20 Uhr)", null],
+    ["Sonntagsstunden", null],
   ];
   summary.forEach(([label, value], i) => {
     const x = MARGIN + i * col3;
@@ -529,8 +533,10 @@ export async function buildStundenzettelPdfFor(
   for (const job of jobs) {
     const dates = opts.dates ?? datesOfMonth(job.schedule.year, job.schedule.month);
     const periodLabel = opts.periodLabel ?? monthLabelDe(job.schedule.year, job.schedule.month);
+    if (job !== jobs[0]) doc.addPage();
+    drawUebersicht(doc, job.schedule, job.employees, dates, periodLabel);
     for (const employee of job.employees) {
-      if (done > 0) doc.addPage();
+      doc.addPage();
       drawStundenzettel(doc, job.schedule, employee, dates, periodLabel);
       // Zähler NICHT im optionalen Aufruf hochzählen: ohne onProgress würde
       // onProgress?.(++done) gar nicht ausgewertet – dann lägen alle Seiten
@@ -542,6 +548,78 @@ export async function buildStundenzettelPdfFor(
   }
 
   return doc;
+}
+
+// ── Übersicht (Seite 1) ─────────────────────────────────────────────────────
+
+/**
+ * Seite 1 jeder PDF: je Mitarbeiter Gesamt-, Nacht- (ab 20 Uhr) und
+ * Sonntagsstunden – vom Programm berechnet. Die Einzelblätter danach lassen
+ * Nacht/Sonntag leer, damit der Betrieb selbst abgleicht.
+ */
+function drawUebersicht(
+  doc: jsPDF,
+  schedule: Schedule,
+  employees: Employee[],
+  dates: string[],
+  periodLabel: string,
+): void {
+  const pageW = doc.internal.pageSize.getWidth();
+  let y = drawHeader(doc, "Stundenübersicht", schedule, periodLabel) + 2;
+  const left = MARGIN;
+  const right = pageW - MARGIN;
+  const numW = 46;
+  const cols = [
+    { label: "Mitarbeiter", x: left, align: "left" as const },
+    { label: "Gesamtstunden", x: right - 2 * numW, align: "right" as const },
+    { label: "Nachtstunden (ab 20 Uhr)", x: right - numW, align: "right" as const },
+    { label: "Sonntagsstunden", x: right, align: "right" as const },
+  ];
+  const rowH = 6.5;
+  const line = (yy: number, color = DIVIDER, width = 0.2) => {
+    doc.setDrawColor(...color);
+    doc.setLineWidth(width);
+    doc.line(left, yy, right, yy);
+  };
+  const cell = (text: string, col: (typeof cols)[number], yy: number) =>
+    doc.text(T(text), col.align === "right" ? col.x - 1.5 : col.x + 1.5, yy, { align: col.align });
+
+  doc.setFillColor(...HEAD_FILL);
+  doc.rect(left, y, right - left, rowH, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(...INK);
+  cols.forEach((col) => cell(col.label, col, y + 4.3));
+  y += rowH;
+  line(y, LINE, 0.3);
+
+  const sum = { total: 0, night: 0, sunday: 0 };
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  for (const employee of employees) {
+    const stats = hourStatsFor(schedule.shifts, employee.id, dates);
+    sum.total += stats.total;
+    sum.night += stats.night;
+    sum.sunday += stats.sunday;
+    cell(employee.name, cols[0], y + 4.3);
+    cell(minutesToDecimalHours(stats.total), cols[1], y + 4.3);
+    cell(minutesToDecimalHours(stats.night), cols[2], y + 4.3);
+    cell(minutesToDecimalHours(stats.sunday), cols[3], y + 4.3);
+    y += rowH;
+    line(y);
+  }
+  line(y, LINE, 0.3);
+  doc.setFont("helvetica", "bold");
+  cell("Summe", cols[0], y + 4.3);
+  cell(minutesToDecimalHours(sum.total), cols[1], y + 4.3);
+  cell(minutesToDecimalHours(sum.night), cols[2], y + 4.3);
+  cell(minutesToDecimalHours(sum.sunday), cols[3], y + 4.3);
+  y += rowH + 4;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(...MUTED);
+  doc.text(T("Nachtstunden: bezahlte Arbeitszeit ab 20:00 Uhr (ohne Pause). Sonntagsstunden: bezahlte Arbeitszeit an Sonntagen. Angaben in Stunden."), left, y);
 }
 
 // ── Datei ausliefern ─────────────────────────────────────────────────────────
@@ -700,9 +778,7 @@ export function buildDienstplanPdf(
   schedule: Schedule,
   opts: { dates: string[]; title: string; layout: SchedulePdfLayout; employeeIds?: string[] },
 ): jsPDF {
-  const doc = newDienstplanDoc(opts.layout);
-  drawDienstplan(doc, schedule, opts);
-  return doc;
+  return buildDienstplanPdfFor([{ schedule, ...opts }], opts.layout);
 }
 
 /** Eine Filiale mit dem Zeitraum, der auf ihre Dienstplan-Seite soll. */
@@ -718,6 +794,8 @@ export function buildDienstplanPdfFor(jobs: DienstplanJob[], layout: SchedulePdf
   const doc = newDienstplanDoc(layout);
   jobs.forEach((job, index) => {
     if (index > 0) doc.addPage();
+    drawUebersicht(doc, job.schedule, dienstplanEmployees(job.schedule, job.employeeIds), job.dates, job.title);
+    doc.addPage();
     drawDienstplan(doc, job.schedule, { ...job, layout });
   });
   return doc;
@@ -733,16 +811,20 @@ function newDienstplanDoc(layout: SchedulePdfLayout): jsPDF {
   });
 }
 
+/** Wer auf den Dienstplan kommt: die Auswahl, sonst alle. */
+function dienstplanEmployees(schedule: Schedule, employeeIds?: string[]): Employee[] {
+  return employeeIds && employeeIds.length
+    ? schedule.employees.filter((e) => employeeIds.includes(e.id))
+    : schedule.employees;
+}
+
 /** Zeichnet EINEN Dienstplan auf die aktuelle Seite. */
 function drawDienstplan(
   doc: jsPDF,
   schedule: Schedule,
   opts: { dates: string[]; title: string; layout: SchedulePdfLayout; employeeIds?: string[] },
 ): void {
-  const employees =
-    opts.employeeIds && opts.employeeIds.length
-      ? schedule.employees.filter((e) => opts.employeeIds!.includes(e.id))
-      : schedule.employees;
+  const employees = dienstplanEmployees(schedule, opts.employeeIds);
   // Eine LISTE je Person und Tag – an geteilten Tagen sind es zwei Dienste.
   const byKey = new Map<string, Shift[]>();
   for (const s of schedule.shifts) {

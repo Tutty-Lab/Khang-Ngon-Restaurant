@@ -9,6 +9,7 @@ import { resolveDay } from "../workHours";
 import { maxConsecutiveRun } from "../consecutive";
 import { weekStartOf } from "../weeks";
 import { allowsLongDays, EARLY_START_MINUTES } from "../longShifts";
+import { earliestStartIn, personalBlocks, surchargeFree, NO_SURCHARGE_END } from "../personalHours";
 
 describe("Real restaurant input: full year audit", () => {
   it("checks both stores together across all 2026 months", () => {
@@ -35,14 +36,21 @@ describe("Real restaurant input: full year audit", () => {
         for (const shift of shifts) {
           const day = resolveDay(s.workHours, shift.date, publicHolidays(2026), {});
           expect(day.closed).toBe(false);
-          const inBlock = (m: number) => day.blocks.some(b => m >= b.startMinutes && m <= b.endMinutes);
-          if (allowsLongDays(s.employees.find(e => e.id === shift.employeeId)) && !day.blocks.some(b => shift.startMinutes >= b.startMinutes && shift.endMinutes <= b.endMinutes)) {
+          const worker = s.employees.find(e => e.id === shift.employeeId)!;
+          const blocks = personalBlocks(worker, day.blocks);
+          const inBlock = (m: number) => blocks.some(b => m >= b.startMinutes && m <= b.endMinutes);
+          if (worker.noSurcharge) {
+            expect(surchargeFree(worker, shift.date, publicHolidays(2026)), `${shift.date} zuschlag`).toBe(true);
+            expect(shift.endMinutes).toBeLessThanOrEqual(NO_SURCHARGE_END);
+          }
+          if (allowsLongDays(worker) && !blocks.some(b => shift.startMinutes >= b.startMinutes && shift.endMinutes <= b.endMinutes)) {
             // „Ca dài": Beginn ab 11:00, Ende in Öffnungszeit, Pause ganz in der Mittagsschließung.
-            expect(shift.startMinutes >= EARLY_START_MINUTES && shift.startMinutes < day.blocks[0].endMinutes && inBlock(shift.endMinutes), `${shift.date} long`).toBe(true);
+            expect(shift.startMinutes >= EARLY_START_MINUTES && shift.startMinutes < blocks[0].endMinutes && inBlock(shift.endMinutes), `${shift.date} long`).toBe(true);
             const pause = shift.pauseStartMinutes ?? -1;
-            expect(day.blocks.some((b, i) => day.blocks[i + 1] && pause >= b.endMinutes && pause + shift.pauseMinutes <= day.blocks[i + 1].startMinutes), `${shift.date} pause`).toBe(true);
+            expect(blocks.some((b, i) => blocks[i + 1] && pause >= b.endMinutes && pause + shift.pauseMinutes <= blocks[i + 1].startMinutes), `${shift.date} pause`).toBe(true);
           } else {
-            expect(day.blocks.some(b => shift.startMinutes >= b.startMinutes && shift.endMinutes <= b.endMinutes)).toBe(true);
+            // „Thiếu giờ thì đến sớm": Beginn bis 10:00 / 16:00 erlaubt.
+            expect(blocks.some(b => shift.startMinutes >= earliestStartIn(b) && shift.endMinutes <= b.endMinutes), `${shift.date} ${worker.name}`).toBe(true);
           }
           expect(shift.startMinutes % 30).toBe(0);
           expect(shift.endMinutes % 30).toBe(0);

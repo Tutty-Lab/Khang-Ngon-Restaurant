@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { Employee, Schedule } from "../../types";
-import { applyMigrations, MIGRATION_DEMO_SEED, MIGRATION_THU_VAN_NIEU, MIGRATION_VAN_SATURDAY_OFF } from "../migrations";
+import { applyMigrations, MIGRATION_DEMO_SEED, MIGRATION_THU_VAN_NIEU, MIGRATION_VAN_SATURDAY_OFF, MIGRATION_HOURS_1130_1700, MIGRATION_HA_LY_NO_SURCHARGE } from "../migrations";
 import { makeEmployee } from "../sampleData";
 import { DEFAULT_WORK_HOURS } from "../workHours";
 
@@ -115,5 +115,31 @@ describe("Trần Thanh Vân: Betriebsleiterin Khang + Ngon, samstags frei, 18 �
       const edited = { ...once, employees: [{ ...once.employees[0], availableWeekdays: undefined }] };
       expect(applyMigrations(store, edited).employees[0].availableWeekdays).toBeUndefined();
     }
+  });
+});
+
+describe("Giờ làm 11:00 / 16:30 và Hà, Lý không Zuschlag", () => {
+  it("verschiebt nur unveränderte Blöcke in Khang/Ngon", () => {
+    const old = { ...stand([]), workHours: { ...structuredClone(DEFAULT_WORK_HOURS),
+      perWeekday: { ...structuredClone(DEFAULT_WORK_HOURS).perWeekday,
+        monday: [{ startMinutes: 720, endMinutes: 900 }, { startMinutes: 1050, endMinutes: 1320 }],
+        tuesday: [{ startMinutes: 660, endMinutes: 900 }] },
+      holiday: [{ startMinutes: 1050, endMinutes: 1320 }] } };
+    const next = applyMigrations("khang", old);
+    expect(next.workHours.perWeekday.monday).toEqual([{ startMinutes: 660, endMinutes: 900 }, { startMinutes: 990, endMinutes: 1320 }]);
+    expect(next.workHours.perWeekday.tuesday).toEqual([{ startMinutes: 660, endMinutes: 900 }]);
+    expect(next.workHours.holiday).toEqual([{ startMinutes: 990, endMinutes: 1320 }]);
+    expect(next.migrations).toContain(MIGRATION_HOURS_1130_1700);
+    expect(applyMigrations("demo", old).workHours).toEqual(old.workHours);
+  });
+  it("setzt Không Zuschlag nur für Hà (Khang) und Lý (Ngon)", () => {
+    const ha = makeEmployee("k1", "Nguyễn Mạnh Hà", "TEILZEIT", 154);
+    const other = makeEmployee("k2", "Vũ Văn Toàn", "VOLLZEIT", 176);
+    const k = applyMigrations("khang", stand([ha, other]));
+    expect(k.employees[0].noSurcharge).toBe(true);
+    expect(k.employees[1].noSurcharge).toBeUndefined();
+    expect(k.migrations).toContain(MIGRATION_HA_LY_NO_SURCHARGE);
+    const n = applyMigrations("ngon", stand([makeEmployee("n1", "Phạm Văn Lý", "VOLLZEIT", 160)]));
+    expect(n.employees[0].noSurcharge).toBe(true);
   });
 });
